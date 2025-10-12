@@ -1,0 +1,18 @@
+{
+  "name": "scheduler-backend",
+  "version": "1.0.0",
+  "description": "Backend server for voice calendar app with MCP support",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "keywords": ["calendar", "mcp", "voice"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
+
