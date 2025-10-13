@@ -2,6 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import transcribeRoutes from './routes/transcribeRoutes.js';
+import calendarRoutes from './routes/calendarRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -15,6 +16,7 @@ app.use(express.json());
 
 // Routes
 app.use('/api', transcribeRoutes);
+app.use('/api/calendar', calendarRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -32,7 +34,12 @@ app.get('/', (req, res) => {
     version: '1.0.0',
     endpoints: {
       health: '/health',
-      transcribe: 'POST /api/transcribe'
+      transcribe: 'POST /api/transcribe',
+      calendar: {
+        create: 'POST /api/calendar/events',
+        update: 'PUT /api/calendar/events/:eventId',
+        delete: 'DELETE /api/calendar/events/:eventId'
+      }
     }
   });
 });
