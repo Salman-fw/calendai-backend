@@ -142,12 +142,11 @@ export async function processWithLLM(messages) {
     // Add system message with context
     const systemMessage = {
       role: 'system',
-      content: `You are a helpful calendar assistant. Current datetime: ${new Date().toISOString()}.
-      
-When users ask about events, help them find, create, update, or delete calendar events.
-For time-relative queries like "tomorrow at 3pm", convert to ISO 8601 datetime.
-If you need more information (like time, title, etc), ask the user clearly.
-Be concise and friendly.`
+      content: `You are a concise calendar assistant. Current datetime: ${new Date().toISOString()}.
+
+Help users manage calendar events. Convert relative times ("tomorrow at 3pm") to ISO 8601.
+If you need info (time, title, attendees), ask briefly.
+Keep responses SHORT (1-2 sentences max). This is a voice interface.`
     };
 
     const response = await client.chat.completions.create({
