@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import transcribeRoutes from './routes/transcribeRoutes.js';
 import calendarRoutes from './routes/calendarRoutes.js';
+import { requestLogger, errorLogger } from './middleware/logger.js';
 
 // Load environment variables
 dotenv.config();
@@ -13,6 +14,7 @@ const PORT = process.env.PORT || 8080;
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(requestLogger);
 
 // Routes
 app.use('/api', transcribeRoutes);
@@ -43,6 +45,9 @@ app.get('/', (req, res) => {
     }
   });
 });
+
+// Error handling middleware (must be last)
+app.use(errorLogger);
 
 // Start server
 app.listen(PORT, () => {
