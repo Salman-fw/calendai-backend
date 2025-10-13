@@ -38,6 +38,7 @@ app.get('/', (req, res) => {
       health: '/health',
       transcribe: 'POST /api/transcribe',
       calendar: {
+        list: 'GET /api/calendar/events?timeMin=&timeMax=&q=&maxResults=',
         create: 'POST /api/calendar/events',
         update: 'PUT /api/calendar/events/:eventId',
         delete: 'DELETE /api/calendar/events/:eventId'

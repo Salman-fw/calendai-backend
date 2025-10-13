@@ -82,6 +82,34 @@ export async function updateEvent(accessToken, eventId, eventData) {
   }
 }
 
+// Get calendar events with optional filters
+export async function getEvents(accessToken, filters = {}) {
+  try {
+    const calendar = getCalendar(accessToken);
+    
+    const response = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: filters.timeMin || new Date().toISOString(),
+      timeMax: filters.timeMax,
+      maxResults: filters.maxResults || 100,
+      singleEvents: true,
+      orderBy: 'startTime',
+      q: filters.q,
+    });
+
+    return {
+      success: true,
+      events: response.data.items || []
+    };
+  } catch (error) {
+    console.error('Get events error:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
 // Delete a calendar event
 export async function deleteEvent(accessToken, eventId) {
   try {

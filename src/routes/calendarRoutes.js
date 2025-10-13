@@ -1,5 +1,5 @@
 import express from 'express';
-import { createEvent, updateEvent, deleteEvent } from '../services/calendarService.js';
+import { createEvent, updateEvent, deleteEvent, getEvents } from '../services/calendarService.js';
 
 const router = express.Router();
 
@@ -16,6 +16,32 @@ function extractToken(req, res, next) {
   req.accessToken = authHeader.substring(7);
   next();
 }
+
+// GET /api/calendar/events - Get events with optional filters
+router.get('/events', extractToken, async (req, res) => {
+  try {
+    const { timeMin, timeMax, maxResults, q } = req.query;
+
+    const result = await getEvents(req.accessToken, {
+      timeMin,
+      timeMax,
+      maxResults: maxResults ? parseInt(maxResults) : undefined,
+      q
+    });
+
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(500).json(result);
+    }
+  } catch (error) {
+    console.error('Get events route error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
 
 // POST /api/calendar/events - Create event
 router.post('/events', extractToken, async (req, res) => {
