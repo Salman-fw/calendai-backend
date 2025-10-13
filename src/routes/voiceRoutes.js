@@ -112,31 +112,64 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
 
     // Check if GPT wants to call a tool
     if (llmResponse.toolCalls && llmResponse.toolCalls.length > 0) {
-      // Execute the first tool call
       const toolCall = llmResponse.toolCalls[0];
-      const toolResult = await executeTool(toolCall, req.accessToken);
+      const { name, arguments: args } = toolCall.function;
+      const params = JSON.parse(args);
 
-      // Add assistant response and tool result to history
-      conversationHistory.push({
-        role: 'assistant',
-        content: null,
-        tool_calls: llmResponse.toolCalls
-      });
+      // Check if this is a read-only action (execute immediately)
+      if (name === 'list_calendar_events') {
+        const toolResult = await executeTool(toolCall, req.accessToken);
 
-      conversationHistory.push({
-        role: 'tool',
-        tool_call_id: toolCall.id,
-        content: JSON.stringify(toolResult)
-      });
+        conversationHistory.push({
+          role: 'assistant',
+          content: null,
+          tool_calls: llmResponse.toolCalls
+        });
 
-      // Get final natural language response from GPT
-      const finalResponse = await processWithLLM(conversationHistory);
+        conversationHistory.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(toolResult)
+        });
+
+        const finalResponse = await processWithLLM(conversationHistory);
+
+        return res.json({
+          success: true,
+          response: finalResponse.message || 'Here are your events',
+          executed: true,
+          result: toolResult,
+          conversationHistory
+        });
+      }
+
+      // For mutating actions, return preview for confirmation
+      const actionPreview = {
+        type: name,
+        ...params
+      };
+
+      // Generate confirmation message
+      let confirmationMessage = '';
+      switch (name) {
+        case 'create_calendar_event':
+          confirmationMessage = `Create "${params.summary}" on ${new Date(params.startTime).toLocaleString()}?`;
+          break;
+        case 'update_calendar_event':
+          confirmationMessage = `Update event "${params.summary || 'this event'}"?`;
+          break;
+        case 'delete_calendar_event':
+          confirmationMessage = `Delete this event?`;
+          break;
+        default:
+          confirmationMessage = 'Confirm this action?';
+      }
 
       return res.json({
         success: true,
-        response: finalResponse.message || 'Action completed',
-        toolUsed: toolCall.function.name,
-        result: toolResult,
+        response: confirmationMessage,
+        needsConfirmation: true,
+        action: actionPreview,
         conversationHistory
       });
     } else {
@@ -155,6 +188,81 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
     }
   } catch (error) {
     console.error('Voice command error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// POST /api/voice/execute - Execute a confirmed action
+router.post('/execute', extractToken, async (req, res) => {
+  try {
+    const { action, confirmed } = req.body;
+
+    if (!action) {
+      return res.status(400).json({
+        success: false,
+        error: 'Action details required'
+      });
+    }
+
+    // User cancelled
+    if (!confirmed) {
+      return res.json({
+        success: true,
+        response: 'Action cancelled',
+        cancelled: true
+      });
+    }
+
+    // Validate action type
+    const validActions = ['create_calendar_event', 'update_calendar_event', 'delete_calendar_event'];
+    if (!validActions.includes(action.type)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid action type'
+      });
+    }
+
+    // Execute the action
+    let result;
+    switch (action.type) {
+      case 'create_calendar_event':
+        result = await createEvent(req.accessToken, {
+          summary: action.summary,
+          startTime: action.startTime,
+          endTime: action.endTime,
+          description: action.description,
+          attendees: action.attendees
+        });
+        break;
+
+      case 'update_calendar_event':
+        result = await updateEvent(req.accessToken, action.eventId, {
+          summary: action.summary,
+          startTime: action.startTime,
+          endTime: action.endTime,
+          description: action.description
+        });
+        break;
+
+      case 'delete_calendar_event':
+        result = await deleteEvent(req.accessToken, action.eventId);
+        break;
+    }
+
+    if (result.success) {
+      return res.json({
+        success: true,
+        response: 'Action completed successfully',
+        result
+      });
+    } else {
+      return res.status(500).json(result);
+    }
+  } catch (error) {
+    console.error('Execute action error:', error);
     res.status(500).json({
       success: false,
       error: error.message

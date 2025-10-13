@@ -39,7 +39,11 @@ app.get('/', (req, res) => {
     endpoints: {
       health: '/health',
       transcribe: 'POST /api/transcribe',
-      voiceCommand: 'POST /api/voice/command (audio or text + history)',
+      voice: {
+        command: 'POST /api/voice/command (returns action preview for confirmation)',
+        execute: 'POST /api/voice/execute (executes confirmed action)',
+        test: 'POST /api/voice/test (LLM test without auth)'
+      },
       calendar: {
         list: 'GET /api/calendar/events?timeMin=&timeMax=&q=&maxResults=',
         create: 'POST /api/calendar/events',
