@@ -1,21 +1,8 @@
 import express from 'express';
 import { createEvent, updateEvent, deleteEvent, getEvents } from '../services/calendarService.js';
+import { extractToken } from '../middleware/auth.js';
 
 const router = express.Router();
-
-// Middleware to extract access token
-function extractToken(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ 
-      success: false, 
-      error: 'No authorization token provided' 
-    });
-  }
-  
-  req.accessToken = authHeader.substring(7);
-  next();
-}
 
 // GET /api/calendar/events - Get events with optional filters
 router.get('/events', extractToken, async (req, res) => {

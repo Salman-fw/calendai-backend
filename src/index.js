@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import transcribeRoutes from './routes/transcribeRoutes.js';
 import calendarRoutes from './routes/calendarRoutes.js';
+import voiceRoutes from './routes/voiceRoutes.js';
 import { requestLogger, errorLogger } from './middleware/logger.js';
 
 // Load environment variables
@@ -19,6 +20,7 @@ app.use(requestLogger);
 // Routes
 app.use('/api', transcribeRoutes);
 app.use('/api/calendar', calendarRoutes);
+app.use('/api/voice', voiceRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -37,6 +39,7 @@ app.get('/', (req, res) => {
     endpoints: {
       health: '/health',
       transcribe: 'POST /api/transcribe',
+      voiceCommand: 'POST /api/voice/command (audio or text + history)',
       calendar: {
         list: 'GET /api/calendar/events?timeMin=&timeMax=&q=&maxResults=',
         create: 'POST /api/calendar/events',
