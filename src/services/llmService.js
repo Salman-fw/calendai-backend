@@ -135,18 +135,24 @@ const tools = [
 ];
 
 // Process user message with GPT function calling
-export async function processWithLLM(messages) {
+export async function processWithLLM(messages, contextInfo = '') {
   try {
     const client = getOpenAI();
     
     // Add system message with context
-    const systemMessage = {
-      role: 'system',
-      content: `You are a concise calendar assistant. Current datetime: ${new Date().toISOString()}.
+    let systemContent = `You are a concise calendar assistant. Current datetime: ${new Date().toISOString()}.
 
 Help users manage calendar events. Convert relative times ("tomorrow at 3pm") to ISO 8601.
 If you need info (time, title, attendees), ask briefly.
-Keep responses SHORT (1-2 sentences max). This is a voice interface.`
+Keep responses SHORT (1-2 sentences max). This is a voice interface.`;
+
+    if (contextInfo) {
+      systemContent += `\n\nContext:\n${contextInfo}`;
+    }
+
+    const systemMessage = {
+      role: 'system',
+      content: systemContent
     };
 
     const response = await client.chat.completions.create({

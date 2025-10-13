@@ -97,6 +97,57 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
       });
     }
 
+    // Fetch context (today's meetings + recent contacts)
+    let contextInfo = '';
+    
+    try {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date();
+      todayEnd.setHours(23, 59, 59, 999);
+      
+      const todayEvents = await getEvents(req.accessToken, {
+        timeMin: todayStart.toISOString(),
+        timeMax: todayEnd.toISOString()
+      });
+
+      if (todayEvents.success && todayEvents.events.length > 0) {
+        const meetingsList = todayEvents.events
+          .map(e => {
+            const start = new Date(e.start.dateTime || e.start.date);
+            const time = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+            return `${time} - ${e.summary}`;
+          })
+          .join(', ');
+        contextInfo += `Today's meetings: ${meetingsList}\n`;
+      }
+
+      const twoMonthsAgo = new Date();
+      twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+      
+      const recentEvents = await getEvents(req.accessToken, {
+        timeMin: twoMonthsAgo.toISOString(),
+        maxResults: 250
+      });
+
+      if (recentEvents.success) {
+        const emails = new Set();
+        recentEvents.events.forEach(event => {
+          if (event.attendees) {
+            event.attendees.forEach(a => {
+              if (a.email) emails.add(a.email);
+            });
+          }
+        });
+        
+        if (emails.size > 0) {
+          contextInfo += `Recent contacts: ${Array.from(emails).join(', ')}`;
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch context:', error);
+    }
+
     // Add current user message to history
     conversationHistory.push({
       role: 'user',
@@ -104,7 +155,7 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
     });
 
     // Process with LLM
-    const llmResponse = await processWithLLM(conversationHistory);
+    const llmResponse = await processWithLLM(conversationHistory, contextInfo);
 
     if (!llmResponse.success) {
       return res.status(500).json(llmResponse);
@@ -236,13 +287,67 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
       return;
     }
 
-    // Step 2: Process with LLM
+    // Step 2: Fetch context (today's meetings + recent contacts)
+    let contextInfo = '';
+    
+    try {
+      // Fetch today's events
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date();
+      todayEnd.setHours(23, 59, 59, 999);
+      
+      const todayEvents = await getEvents(req.accessToken, {
+        timeMin: todayStart.toISOString(),
+        timeMax: todayEnd.toISOString()
+      });
+
+      if (todayEvents.success && todayEvents.events.length > 0) {
+        const meetingsList = todayEvents.events
+          .map(e => {
+            const start = new Date(e.start.dateTime || e.start.date);
+            const time = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+            return `${time} - ${e.summary}`;
+          })
+          .join(', ');
+        contextInfo += `Today's meetings: ${meetingsList}\n`;
+      }
+
+      // Fetch recent contacts (last 2 months)
+      const twoMonthsAgo = new Date();
+      twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+      
+      const recentEvents = await getEvents(req.accessToken, {
+        timeMin: twoMonthsAgo.toISOString(),
+        maxResults: 100
+      });
+
+      if (recentEvents.success) {
+        const emails = new Set();
+        recentEvents.events.forEach(event => {
+          if (event.attendees) {
+            event.attendees.forEach(a => {
+              if (a.email) emails.add(a.email);
+            });
+          }
+        });
+        
+        if (emails.size > 0) {
+          contextInfo += `Recent contacts: ${Array.from(emails).join(', ')}`;
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch context:', error);
+      // Continue without context
+    }
+
+    // Step 3: Process with LLM
     conversationHistory.push({
       role: 'user',
       content: userMessage
     });
 
-    const llmResponse = await processWithLLM(conversationHistory);
+    const llmResponse = await processWithLLM(conversationHistory, contextInfo);
 
     if (!llmResponse.success) {
       res.write(`data: ${JSON.stringify({ type: 'error', error: llmResponse.error })}\n\n`);
@@ -250,7 +355,7 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
       return;
     }
 
-    // Step 3: Send result
+    // Step 4: Send result
     if (llmResponse.toolCalls && llmResponse.toolCalls.length > 0) {
       const toolCall = llmResponse.toolCalls[0];
       const { name, arguments: args } = toolCall.function;
