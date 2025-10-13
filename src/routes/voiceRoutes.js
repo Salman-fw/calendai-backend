@@ -36,6 +36,31 @@ async function executeTool(toolCall, accessToken) {
   }
 }
 
+// POST /api/voice/test - Test LLM without calendar (no auth required)
+router.post('/test', upload.single('audio'), async (req, res) => {
+  try {
+    let userMessage;
+    
+    if (req.body.text) {
+      userMessage = req.body.text;
+    } else {
+      return res.status(400).json({ success: false, error: 'Text input required' });
+    }
+
+    const conversationHistory = [{ role: 'user', content: userMessage }];
+    const llmResponse = await processWithLLM(conversationHistory);
+
+    return res.json({
+      success: true,
+      response: llmResponse.message,
+      test: true
+    });
+  } catch (error) {
+    console.error('LLM test error:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // POST /api/voice/command - Process voice or text command
 router.post('/command', extractToken, upload.single('audio'), async (req, res) => {
   try {
