@@ -4,9 +4,20 @@ let openai = null;
 
 function getOpenAI() {
   if (!openai) {
-    openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
-    });
+    const apiKey = process.env.OPENAI_API_KEY;
+    
+    if (!apiKey || apiKey === 'your_openai_api_key_here') {
+      console.error('⚠️  OPENAI_API_KEY not configured or using placeholder value');
+      throw new Error('OpenAI API key not configured');
+    }
+    
+    try {
+      openai = new OpenAI({ apiKey });
+      console.log('✅ OpenAI Whisper service initialized successfully');
+    } catch (error) {
+      console.error('❌ Failed to initialize OpenAI service:', error.message);
+      throw error;
+    }
   }
   return openai;
 }
