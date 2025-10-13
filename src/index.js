@@ -1,6 +1,7 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
+import transcribeRoutes from './routes/transcribeRoutes.js';
 
 // Load environment variables
 dotenv.config();
@@ -11,6 +12,9 @@ const PORT = process.env.PORT || 8080;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Routes
+app.use('/api', transcribeRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -27,7 +31,8 @@ app.get('/', (req, res) => {
     message: 'Voice Calendar Backend API',
     version: '1.0.0',
     endpoints: {
-      health: '/health'
+      health: '/health',
+      transcribe: 'POST /api/transcribe'
     }
   });
 });
