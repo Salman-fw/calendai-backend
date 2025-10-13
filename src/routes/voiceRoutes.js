@@ -195,6 +195,145 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
   }
 });
 
+// POST /api/voice/stream - Process voice command with SSE (progressive updates)
+router.post('/stream', extractToken, upload.single('audio'), async (req, res) => {
+  try {
+    // Set SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+
+    let conversationHistory = [];
+
+    // Parse conversation history if provided
+    if (req.body.history) {
+      try {
+        conversationHistory = JSON.parse(req.body.history);
+      } catch (e) {
+        console.error('Failed to parse history:', e);
+      }
+    }
+
+    // Step 1: Transcribe audio
+    let userMessage;
+    if (req.file) {
+      const transcription = await transcribeAudio(req.file.buffer, req.file.originalname);
+      
+      if (!transcription.success) {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: transcription.error })}\n\n`);
+        res.end();
+        return;
+      }
+
+      userMessage = transcription.text;
+      
+      // Send transcription event
+      res.write(`data: ${JSON.stringify({ type: 'transcription', text: userMessage })}\n\n`);
+    } else {
+      res.write(`data: ${JSON.stringify({ type: 'error', error: 'Audio file input required' })}\n\n`);
+      res.end();
+      return;
+    }
+
+    // Step 2: Process with LLM
+    conversationHistory.push({
+      role: 'user',
+      content: userMessage
+    });
+
+    const llmResponse = await processWithLLM(conversationHistory);
+
+    if (!llmResponse.success) {
+      res.write(`data: ${JSON.stringify({ type: 'error', error: llmResponse.error })}\n\n`);
+      res.end();
+      return;
+    }
+
+    // Step 3: Send result
+    if (llmResponse.toolCalls && llmResponse.toolCalls.length > 0) {
+      const toolCall = llmResponse.toolCalls[0];
+      const { name, arguments: args } = toolCall.function;
+      const params = JSON.parse(args);
+
+      // Read-only action - execute immediately
+      if (name === 'list_calendar_events') {
+        const toolResult = await executeTool(toolCall, req.accessToken);
+
+        conversationHistory.push({
+          role: 'assistant',
+          content: null,
+          tool_calls: llmResponse.toolCalls
+        });
+
+        conversationHistory.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: JSON.stringify(toolResult)
+        });
+
+        const finalResponse = await processWithLLM(conversationHistory);
+
+        res.write(`data: ${JSON.stringify({
+          type: 'response',
+          response: finalResponse.message || 'Here are your events',
+          executed: true,
+          result: toolResult,
+          conversationHistory
+        })}\n\n`);
+      } else {
+        // Mutating action - request confirmation
+        const actionPreview = {
+          type: name,
+          ...params
+        };
+
+        let confirmationMessage = '';
+        switch (name) {
+          case 'create_calendar_event':
+            confirmationMessage = `Create "${params.summary}" on ${new Date(params.startTime).toLocaleString()}?`;
+            break;
+          case 'update_calendar_event':
+            confirmationMessage = `Update event "${params.summary || 'this event'}"?`;
+            break;
+          case 'delete_calendar_event':
+            confirmationMessage = `Delete this event?`;
+            break;
+          default:
+            confirmationMessage = 'Confirm this action?';
+        }
+
+        res.write(`data: ${JSON.stringify({
+          type: 'response',
+          response: confirmationMessage,
+          needsConfirmation: true,
+          action: actionPreview,
+          conversationHistory
+        })}\n\n`);
+      }
+    } else {
+      // Clarification needed
+      conversationHistory.push({
+        role: 'assistant',
+        content: llmResponse.message
+      });
+
+      res.write(`data: ${JSON.stringify({
+        type: 'response',
+        response: llmResponse.message,
+        needsClarification: true,
+        conversationHistory
+      })}\n\n`);
+    }
+
+    res.end();
+  } catch (error) {
+    console.error('Voice stream error:', error);
+    res.write(`data: ${JSON.stringify({ type: 'error', error: error.message })}\n\n`);
+    res.end();
+  }
+});
+
 // POST /api/voice/execute - Execute a confirmed action
 router.post('/execute', extractToken, async (req, res) => {
   try {

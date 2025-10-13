@@ -40,6 +40,7 @@ app.get('/', (req, res) => {
       health: '/health',
       transcribe: 'POST /api/transcribe',
       voice: {
+        stream: 'POST /api/voice/stream (SSE: progressive updates - transcription → response)',
         command: 'POST /api/voice/command (returns action preview for confirmation)',
         execute: 'POST /api/voice/execute (executes confirmed action)',
         test: 'POST /api/voice/test (LLM test without auth)'
