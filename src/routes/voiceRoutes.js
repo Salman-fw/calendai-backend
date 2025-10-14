@@ -116,7 +116,7 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
           .map(e => {
             const start = new Date(e.start.dateTime || e.start.date);
             const time = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-            return `${time} - ${e.summary}`;
+            return `${time} - ${e.summary} (ID: ${e.id})`;
           })
           .join(', ');
         contextInfo += `Today's meetings: ${meetingsList}\n`;
@@ -242,6 +242,21 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
             });
           }
 
+          // Validate email addresses
+          const invalidEmails = params.attendees.filter(attendee => {
+            const email = attendee.email;
+            return !email || !email.includes('@') || !email.includes('.') || email.length < 5;
+          });
+
+          if (invalidEmails.length > 0) {
+            return res.json({
+              success: true,
+              response: "Please provide valid email addresses for all attendees.",
+              needsClarification: true,
+              conversationHistory
+            });
+          }
+
           // If no start time after multiple attempts, use next available hour
           if (!params.startTime) {
             const now = new Date();
@@ -265,8 +280,8 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
           }
         }
 
-        // For delete events, fetch event details for confirmation
-        if (name === 'delete_calendar_event' && params.eventId) {
+        // For delete and update events, fetch event details for confirmation
+        if ((name === 'delete_calendar_event' || name === 'update_calendar_event') && params.eventId) {
           try {
             const calendar = getCalendar(req.accessToken);
             const eventResponse = await calendar.events.get({
@@ -283,7 +298,7 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
               attendees: event.attendees
             };
           } catch (error) {
-            console.error('Failed to fetch event details for deletion:', error);
+            console.error(`Failed to fetch event details for ${name}:`, error);
           }
         }
 
@@ -294,7 +309,13 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
           confirmationMessage = `Create "${params.summary}" on ${new Date(params.startTime).toLocaleString()}?`;
           break;
         case 'update_calendar_event':
-          confirmationMessage = `Update event "${params.summary || 'this event'}"?`;
+          if (actionPreview.eventDetails) {
+            const startTime = new Date(actionPreview.eventDetails.start.dateTime || actionPreview.eventDetails.start.date);
+            const timeStr = startTime.toLocaleString();
+            confirmationMessage = `Update "${actionPreview.eventDetails.summary}" on ${timeStr}?`;
+          } else {
+            confirmationMessage = `Update event "${params.summary || 'this event'}"?`;
+          }
           break;
         case 'delete_calendar_event':
           if (actionPreview.eventDetails) {
@@ -400,7 +421,7 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
           .map(e => {
             const start = new Date(e.start.dateTime || e.start.date);
             const time = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-            return `${time} - ${e.summary}`;
+            return `${time} - ${e.summary} (ID: ${e.id})`;
           })
           .join(', ');
         contextInfo += `Today's meetings: ${meetingsList}\n`;
@@ -528,6 +549,22 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
             return;
           }
 
+          // Validate email addresses
+          const invalidEmails = params.attendees.filter(attendee => {
+            const email = attendee.email;
+            return !email || !email.includes('@') || !email.includes('.') || email.length < 5;
+          });
+
+          if (invalidEmails.length > 0) {
+            res.write(`data: ${JSON.stringify({
+              type: 'response',
+              response: "Please provide valid email addresses for all attendees.",
+              needsClarification: true
+            })}\n\n`);
+            res.end();
+            return;
+          }
+
           // If no start time after multiple attempts, use next available hour
           if (!params.startTime) {
             const now = new Date();
@@ -551,8 +588,8 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
           }
         }
 
-        // For delete events, fetch event details for confirmation
-        if (name === 'delete_calendar_event' && params.eventId) {
+        // For delete and update events, fetch event details for confirmation
+        if ((name === 'delete_calendar_event' || name === 'update_calendar_event') && params.eventId) {
           try {
             const calendar = getCalendar(req.accessToken);
             const eventResponse = await calendar.events.get({
@@ -569,7 +606,7 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
               attendees: event.attendees
             };
           } catch (error) {
-            console.error('Failed to fetch event details for deletion:', error);
+            console.error(`Failed to fetch event details for ${name}:`, error);
           }
         }
 
@@ -579,7 +616,13 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
             confirmationMessage = `Create "${params.summary}" on ${new Date(params.startTime).toLocaleString()}?`;
             break;
           case 'update_calendar_event':
-            confirmationMessage = `Update event "${params.summary || 'this event'}"?`;
+            if (actionPreview.eventDetails) {
+              const startTime = new Date(actionPreview.eventDetails.start.dateTime || actionPreview.eventDetails.start.date);
+              const timeStr = startTime.toLocaleString();
+              confirmationMessage = `Update "${actionPreview.eventDetails.summary}" on ${timeStr}?`;
+            } else {
+              confirmationMessage = `Update event "${params.summary || 'this event'}"?`;
+            }
             break;
         case 'delete_calendar_event':
           if (actionPreview.eventDetails) {
@@ -657,6 +700,19 @@ router.post('/execute', extractToken, async (req, res) => {
     let result;
     switch (action.type) {
       case 'create_calendar_event':
+        // Validate email addresses
+        const invalidEmails = action.attendees.filter(attendee => {
+          const email = attendee.email;
+          return !email || !email.includes('@') || !email.includes('.') || email.length < 5;
+        });
+
+        if (invalidEmails.length > 0) {
+          return res.status(400).json({
+            success: false,
+            error: 'Please provide valid email addresses for all attendees'
+          });
+        }
+
         // Smart defaults for start time and end time
         let startTime = action.startTime;
         let endTime = action.endTime;
@@ -697,6 +753,19 @@ router.post('/execute', extractToken, async (req, res) => {
           return res.status(400).json({
             success: false,
             error: 'At least one attendee is required for meeting updates'
+          });
+        }
+
+        // Validate email addresses
+        const invalidUpdateEmails = action.attendees.filter(attendee => {
+          const email = attendee.email;
+          return !email || !email.includes('@') || !email.includes('.') || email.length < 5;
+        });
+
+        if (invalidUpdateEmails.length > 0) {
+          return res.status(400).json({
+            success: false,
+            error: 'Please provide valid email addresses for all attendees'
           });
         }
 

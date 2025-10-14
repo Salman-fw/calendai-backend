@@ -158,11 +158,33 @@ export async function processWithLLM(messages, contextInfo = '') {
     // Add system message with context
     let systemContent = `You are an ultra-concise calendar assistant. Current datetime: ${new Date().toISOString()}.
 
-Use minimal words.
-- "Schedule meeting with John tomorrow 3pm" → Create event immediately
-- "Cancel my 3pm" → Delete the 3pm event
-- "What's tomorrow?" → List tomorrow's events
-- If missing info: Ask ONE short question only
+VOICE COMMAND EXAMPLES (non-exhaustive, just to give you an idea):
+
+CREATE MEETINGS:
+- "Schedule meeting with John tomorrow 3pm" → create_calendar_event
+- "Book a call with Sarah next Tuesday at 2pm" → create_calendar_event
+- "Set up a meeting with the team tomorrow morning" → create_calendar_event
+- "Create an appointment with Dr. Smith Friday 10am" → create_calendar_event
+
+DELETE MEETINGS:
+- "Cancel my 3pm meeting" → delete_calendar_event (use eventId from context)
+- "Delete meeting with John" → delete_calendar_event (use eventId from context)
+- "Remove my appointment tomorrow" → delete_calendar_event
+- "Cancel the team meeting" → delete_calendar_event
+
+UPDATE MEETINGS:
+- "Move my 3pm meeting to 4pm" → update_calendar_event
+- "Reschedule meeting with John to tomorrow" → update_calendar_event
+- "Change the team meeting time to 2pm" → update_calendar_event
+- "Update my appointment to next week" → update_calendar_event
+
+LIST MEETINGS:
+- "What's tomorrow?" → list_calendar_events
+- "Show me my schedule today" → list_calendar_events
+- "What meetings do I have this week?" → list_calendar_events
+- "Do I have any meetings with John?" → list_calendar_events
+
+If missing info: Ask ONE short question only
 
 SMART DEFAULTS:
 - If user provides start time + duration: Calculate end time automatically
@@ -173,7 +195,10 @@ SMART DEFAULTS:
 PARTICIPANT RESOLUTION:
 - If user mentions a name that matches multiple contacts, ask for clarification
 - Example: "John" matches "John Smith (john@company.com)" and "John Doe (john.doe@startup.com)" → Ask "Which John? John Smith or John Doe?"
-- Always use exact email addresses in attendees array
+- If you cannot confidently determine an email address from context, ask user to provide it
+- Example: "Schedule with Sarah" but no Sarah in recent contacts → Ask "What's Sarah's email?"
+- Example: "Meeting with John" but multiple Johns → Ask "Which John? John Smith or John Doe?"
+- Always use exact email addresses in attendees array - never guess or use partial emails
 
 Examples of good responses:
 - "Create 'Meeting with John' tomorrow 3pm?"
