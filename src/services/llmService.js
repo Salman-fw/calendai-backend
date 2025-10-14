@@ -79,10 +79,11 @@ const tools = [
                 email: { type: 'string' }
               }
             },
-            description: 'List of attendee emails (optional)'
+            description: 'List of attendee emails (REQUIRED - at least one attendee must be specified)',
+            minItems: 1
           }
         },
-        required: ['summary', 'startTime']
+        required: ['summary', 'startTime', 'attendees']
       }
     }
   },
@@ -113,9 +114,20 @@ const tools = [
           description: {
             type: 'string',
             description: 'Updated description'
+          },
+          attendees: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                email: { type: 'string' }
+              }
+            },
+            description: 'List of attendee emails (REQUIRED - at least one attendee must be specified)',
+            minItems: 1
           }
         },
-        required: ['eventId']
+        required: ['eventId', 'attendees']
       }
     }
   },
@@ -157,6 +169,11 @@ SMART DEFAULTS:
 - If user provides start time but no duration: Use 30 minutes default
 - If user refuses/unable to provide start time after 2 attempts: Use next available hour as start time
 - Always try to extract time from user input first
+
+PARTICIPANT RESOLUTION:
+- If user mentions a name that matches multiple contacts, ask for clarification
+- Example: "John" matches "John Smith (john@company.com)" and "John Doe (john.doe@startup.com)" → Ask "Which John? John Smith or John Doe?"
+- Always use exact email addresses in attendees array
 
 Examples of good responses:
 - "Create 'Meeting with John' tomorrow 3pm?"

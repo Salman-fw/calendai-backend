@@ -29,6 +29,7 @@ export async function createEvent(accessToken, eventData) {
     const response = await calendar.events.insert({
       calendarId: 'primary',
       resource: event,
+      sendUpdates: 'all' // Send email notifications to all attendees
     });
 
     return {
@@ -67,6 +68,7 @@ export async function updateEvent(accessToken, eventId, eventData) {
       calendarId: 'primary',
       eventId: eventId,
       resource: event,
+      sendUpdates: 'all' // Send email notifications to all attendees
     });
 
     return {

@@ -131,17 +131,25 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
       });
 
       if (recentEvents.success) {
-        const emails = new Set();
+        const contactMap = new Map(); // email -> {name, email}
         recentEvents.events.forEach(event => {
           if (event.attendees) {
             event.attendees.forEach(a => {
-              if (a.email) emails.add(a.email);
+              if (a.email && a.displayName) {
+                contactMap.set(a.email, {
+                  name: a.displayName,
+                  email: a.email
+                });
+              }
             });
           }
         });
         
-        if (emails.size > 0) {
-          contextInfo += `Recent contacts: ${Array.from(emails).join(', ')}`;
+        if (contactMap.size > 0) {
+          const contactsList = Array.from(contactMap.values())
+            .map(c => `${c.name} (${c.email})`)
+            .join(', ');
+          contextInfo += `Recent contacts: ${contactsList}`;
         }
       }
     } catch (error) {
@@ -202,6 +210,16 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
 
       // Smart defaults for create events
       if (name === 'create_calendar_event') {
+        // Validate required attendees
+        if (!params.attendees || params.attendees.length === 0) {
+          return res.json({
+            success: true,
+            response: "Who should attend this meeting?",
+            needsClarification: true,
+            conversationHistory
+          });
+        }
+
         // If no start time after multiple attempts, use next available hour
         if (!params.startTime) {
           const now = new Date();
@@ -348,17 +366,25 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
       });
 
       if (recentEvents.success) {
-        const emails = new Set();
+        const contactMap = new Map(); // email -> {name, email}
         recentEvents.events.forEach(event => {
           if (event.attendees) {
             event.attendees.forEach(a => {
-              if (a.email) emails.add(a.email);
+              if (a.email && a.displayName) {
+                contactMap.set(a.email, {
+                  name: a.displayName,
+                  email: a.email
+                });
+              }
             });
           }
         });
         
-        if (emails.size > 0) {
-          contextInfo += `Recent contacts: ${Array.from(emails).join(', ')}`;
+        if (contactMap.size > 0) {
+          const contactsList = Array.from(contactMap.values())
+            .map(c => `${c.name} (${c.email})`)
+            .join(', ');
+          contextInfo += `Recent contacts: ${contactsList}`;
         }
       }
     } catch (error) {
@@ -420,6 +446,18 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
 
         // Smart defaults for create events
         if (name === 'create_calendar_event') {
+          // Validate required attendees
+          if (!params.attendees || params.attendees.length === 0) {
+            res.write(`data: ${JSON.stringify({
+              type: 'response',
+              response: "Who should attend this meeting?",
+              needsClarification: true,
+              conversationHistory
+            })}\n\n`);
+            res.end();
+            return;
+          }
+
           // If no start time after multiple attempts, use next available hour
           if (!params.startTime) {
             const now = new Date();
@@ -558,11 +596,20 @@ router.post('/execute', extractToken, async (req, res) => {
         break;
 
       case 'update_calendar_event':
+        // Validate required attendees for updates
+        if (!action.attendees || action.attendees.length === 0) {
+          return res.status(400).json({
+            success: false,
+            error: 'At least one attendee is required for meeting updates'
+          });
+        }
+
         result = await updateEvent(req.accessToken, action.eventId, {
           summary: action.summary,
           startTime: action.startTime,
           endTime: action.endTime,
-          description: action.description
+          description: action.description,
+          attendees: action.attendees
         });
         break;
 
