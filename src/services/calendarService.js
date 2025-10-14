@@ -24,6 +24,15 @@ export async function createEvent(accessToken, eventData) {
         timeZone: eventData.timeZone || 'UTC',
       },
       attendees: eventData.attendees || [],
+      conferenceData: {
+        createRequest: {
+          requestId: `meet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          conferenceSolutionKey: {
+            type: 'hangoutsMeet'
+          }
+        }
+      },
+      conferenceDataVersion: 1
     };
 
     const response = await calendar.events.insert({
@@ -72,6 +81,23 @@ export async function updateEvent(accessToken, eventId, eventData) {
       } : existingEvent.end,
       attendees: eventData.attendees || existingEvent.attendees,
     };
+
+    // Ensure Google Meet link exists (preserve existing or create new)
+    if (existingEvent.conferenceData && existingEvent.conferenceData.entryPoints) {
+      // Preserve existing Meet link
+      updatedEvent.conferenceData = existingEvent.conferenceData;
+    } else {
+      // Create new Meet link if none exists
+      updatedEvent.conferenceData = {
+        createRequest: {
+          requestId: `meet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          conferenceSolutionKey: {
+            type: 'hangoutsMeet'
+          }
+        }
+      };
+      updatedEvent.conferenceDataVersion = 1;
+    }
 
     const response = await calendar.events.update({
       calendarId: 'primary',
