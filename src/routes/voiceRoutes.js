@@ -167,7 +167,13 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
     console.log('🔍 DEBUG - Conversation history before LLM:', JSON.stringify(conversationHistory, null, 2));
     console.log('🔍 DEBUG - Context info:', contextInfo);
 
-    const llmResponse = await processWithLLM(conversationHistory, contextInfo);
+    // Extract timezone information from headers
+    const timezoneInfo = {
+      deviceTimezone: req.headers['x-device-timezone'],
+      timezoneOffset: req.headers['x-device-timezone-offset']
+    };
+
+    const llmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo);
 
     if (!llmResponse.success) {
       console.log('❌ DEBUG - LLM response failed:', llmResponse.error);
@@ -473,7 +479,13 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
     console.log('🔍 DEBUG - Conversation history before LLM:', JSON.stringify(conversationHistory, null, 2));
     console.log('🔍 DEBUG - Context info:', contextInfo);
 
-    const llmResponse = await processWithLLM(conversationHistory, contextInfo);
+    // Extract timezone information from headers
+    const timezoneInfo = {
+      deviceTimezone: req.headers['x-device-timezone'],
+      timezoneOffset: req.headers['x-device-timezone-offset']
+    };
+
+    const llmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo);
 
     if (!llmResponse.success) {
       console.log('❌ DEBUG - LLM response failed:', llmResponse.error);
@@ -748,25 +760,30 @@ router.post('/execute', extractToken, async (req, res) => {
         break;
 
       case 'update_calendar_event':
-        // Validate required attendees for updates
-        if (!action.attendees || action.attendees.length === 0) {
+        // Validate that at least one field is being updated
+        const hasUpdateFields = action.summary || action.startTime || action.endTime || 
+                               action.description !== undefined || action.attendees;
+        
+        if (!hasUpdateFields) {
           return res.status(400).json({
             success: false,
-            error: 'At least one attendee is required for meeting updates'
+            error: 'At least one field must be provided for update (summary, startTime, endTime, description, or attendees)'
           });
         }
 
-        // Validate email addresses
-        const invalidUpdateEmails = action.attendees.filter(attendee => {
-          const email = attendee.email;
-          return !email || !email.includes('@') || !email.includes('.') || email.length < 5;
-        });
-
-        if (invalidUpdateEmails.length > 0) {
-          return res.status(400).json({
-            success: false,
-            error: 'Please provide valid email addresses for all attendees'
+        // Validate email addresses if attendees are provided
+        if (action.attendees && action.attendees.length > 0) {
+          const invalidUpdateEmails = action.attendees.filter(attendee => {
+            const email = attendee.email;
+            return !email || !email.includes('@') || !email.includes('.') || email.length < 5;
           });
+
+          if (invalidUpdateEmails.length > 0) {
+            return res.status(400).json({
+              success: false,
+              error: 'Please provide valid email addresses for all attendees'
+            });
+          }
         }
 
         result = await updateEvent(req.accessToken, action.eventId, {

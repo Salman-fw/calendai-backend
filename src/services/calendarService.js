@@ -50,24 +50,33 @@ export async function updateEvent(accessToken, eventId, eventData) {
   try {
     const calendar = getCalendar(accessToken);
     
-    const event = {
-      summary: eventData.summary,
-      description: eventData.description,
-      start: {
+    // First, fetch the existing event to preserve data
+    const existingEventResponse = await calendar.events.get({
+      calendarId: 'primary',
+      eventId: eventId
+    });
+    
+    const existingEvent = existingEventResponse.data;
+    
+    // Merge new data with existing data (only update specified fields)
+    const updatedEvent = {
+      summary: eventData.summary || existingEvent.summary,
+      description: eventData.description !== undefined ? eventData.description : existingEvent.description,
+      start: eventData.startTime ? {
         dateTime: eventData.startTime,
-        timeZone: eventData.timeZone || 'UTC',
-      },
-      end: {
+        timeZone: eventData.timeZone || existingEvent.start.timeZone || 'UTC',
+      } : existingEvent.start,
+      end: eventData.endTime ? {
         dateTime: eventData.endTime,
-        timeZone: eventData.timeZone || 'UTC',
-      },
-      attendees: eventData.attendees,
+        timeZone: eventData.timeZone || existingEvent.end.timeZone || 'UTC',
+      } : existingEvent.end,
+      attendees: eventData.attendees || existingEvent.attendees,
     };
 
     const response = await calendar.events.update({
       calendarId: 'primary',
       eventId: eventId,
-      resource: event,
+      resource: updatedEvent,
       sendUpdates: 'all' // Send email notifications to all attendees
     });
 

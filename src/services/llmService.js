@@ -123,11 +123,10 @@ const tools = [
                 email: { type: 'string' }
               }
             },
-            description: 'List of attendee emails (REQUIRED - at least one attendee must be specified)',
-            minItems: 1
+            description: 'List of attendee emails (optional - if not provided, existing attendees are preserved)'
           }
         },
-        required: ['eventId', 'attendees']
+        required: ['eventId']
       }
     }
   },
@@ -151,7 +150,7 @@ const tools = [
 ];
 
 // Process user message with GPT function calling
-export async function processWithLLM(messages, contextInfo = '') {
+export async function processWithLLM(messages, contextInfo = '', timezoneInfo = {}) {
   try {
     const client = getOpenAI();
     
@@ -171,12 +170,16 @@ DELETE MEETINGS:
 - "Delete meeting with John" → delete_calendar_event (use eventId from context)
 - "Remove my appointment tomorrow" → delete_calendar_event
 - "Cancel the team meeting" → delete_calendar_event
+- If multiple meetings match, ask for clarification
 
 UPDATE MEETINGS:
-- "Move my 3pm meeting to 4pm" → update_calendar_event
-- "Reschedule meeting with John to tomorrow" → update_calendar_event
-- "Change the team meeting time to 2pm" → update_calendar_event
-- "Update my appointment to next week" → update_calendar_event
+- "Move my 3pm meeting to 4pm" → update_calendar_event (provide eventId + new startTime)
+- "Reschedule meeting with John to tomorrow" → update_calendar_event (provide eventId + new startTime)
+- "Change the team meeting time to 2pm" → update_calendar_event (provide eventId + new startTime)
+- "Update my appointment to next week" → update_calendar_event (provide eventId + new startTime)
+- "Change attendees to john@example.com" → update_calendar_event (provide eventId + new attendees)
+- Always provide eventId and the specific fields being updated
+- If multiple meetings match, ask for clarification
 
 LIST MEETINGS:
 - "What's tomorrow?" → list_calendar_events
@@ -200,16 +203,34 @@ PARTICIPANT RESOLUTION:
 - Example: "Meeting with John" but multiple Johns → Ask "Which John? John Smith or John Doe?"
 - Always use exact email addresses in attendees array - never guess or use partial emails
 
+DISAMBIGUATION RULES:
+- If multiple meetings match a delete/update command, ask for clarification
+- Example: "Delete meeting with Salman" but 2 Salman meetings → Ask "Which meeting...?", reference some of the meeting details
+- NEVER make multiple tool calls for the same action - always disambiguate first
+
 Examples of good responses:
-- "Create 'Meeting with John' tomorrow 3pm?"
-- "What time?"
-- "Done"
-- "You have 3 meetings tomorrow"
+- "Create 'Meeting with John' tomorrow 3pm?" (after calling create_calendar_event tool)
+- "What time?" (when missing time info)
+- "Done" (after successful action)
+- "You have 3 meetings tomorrow" (after calling list_calendar_events tool)
+
+When user provides complete meeting info (person + time), use the appropriate tool immediately.
+When user provides partial info, ask for the missing piece.
 
 NEVER use phrases like "I'll help you" or "Let me". Just state the action or ask the question.`;
 
     if (contextInfo) {
-      systemContent += `\n\nContext:\n${contextInfo}`;
+      systemContent += `\n\nIMPORTANT: Context below is GROUND TRUTH from your calendar. Prioritize this over conversation history.
+
+Context:\n${contextInfo}`;
+    }
+
+    // Add timezone information if available
+    if (timezoneInfo.deviceTimezone || timezoneInfo.timezoneOffset) {
+      systemContent += `\n\nUSER TIMEZONE INFO:
+- Device Timezone: ${timezoneInfo.deviceTimezone || 'Not provided'}
+- Timezone Offset: ${timezoneInfo.timezoneOffset ? `${timezoneInfo.timezoneOffset} minutes from UTC` : 'Not provided'}
+- All time references should be interpreted in the user's timezone`;
     }
 
     const systemMessage = {
