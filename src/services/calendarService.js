@@ -1,7 +1,7 @@
 import { google } from 'googleapis';
 
 // Create calendar client with user's access token
-function getCalendar(accessToken) {
+export function getCalendar(accessToken) {
   const oauth2Client = new google.auth.OAuth2();
   oauth2Client.setCredentials({ access_token: accessToken });
   return google.calendar({ version: 'v3', auth: oauth2Client });
