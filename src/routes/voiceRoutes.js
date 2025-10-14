@@ -200,6 +200,31 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
         ...params
       };
 
+      // Smart defaults for create events
+      if (name === 'create_calendar_event') {
+        // If no start time after multiple attempts, use next available hour
+        if (!params.startTime) {
+          const now = new Date();
+          const nextHour = new Date(now);
+          nextHour.setHours(now.getHours() + 1, 0, 0, 0);
+          actionPreview.startTime = nextHour.toISOString();
+        }
+        
+        // Calculate end time based on duration or default to 30 minutes
+        if (!params.endTime && actionPreview.startTime) {
+          const startTime = new Date(actionPreview.startTime);
+          let durationMinutes = 30; // Default
+          
+          // If duration is provided in params, use it
+          if (params.duration) {
+            durationMinutes = parseInt(params.duration) || 30;
+          }
+          
+          const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
+          actionPreview.endTime = endTime.toISOString();
+        }
+      }
+
       // Generate confirmation message
       let confirmationMessage = '';
       switch (name) {
@@ -393,6 +418,31 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
           ...params
         };
 
+        // Smart defaults for create events
+        if (name === 'create_calendar_event') {
+          // If no start time after multiple attempts, use next available hour
+          if (!params.startTime) {
+            const now = new Date();
+            const nextHour = new Date(now);
+            nextHour.setHours(now.getHours() + 1, 0, 0, 0);
+            actionPreview.startTime = nextHour.toISOString();
+          }
+          
+          // Calculate end time based on duration or default to 30 minutes
+          if (!params.endTime && actionPreview.startTime) {
+            const startTime = new Date(actionPreview.startTime);
+            let durationMinutes = 30; // Default
+            
+            // If duration is provided in params, use it
+            if (params.duration) {
+              durationMinutes = parseInt(params.duration) || 30;
+            }
+            
+            const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
+            actionPreview.endTime = endTime.toISOString();
+          }
+        }
+
         let confirmationMessage = '';
         switch (name) {
           case 'create_calendar_event':
@@ -473,10 +523,35 @@ router.post('/execute', extractToken, async (req, res) => {
     let result;
     switch (action.type) {
       case 'create_calendar_event':
+        // Smart defaults for start time and end time
+        let startTime = action.startTime;
+        let endTime = action.endTime;
+        
+        // If no start time, use next available hour
+        if (!startTime) {
+          const now = new Date();
+          const nextHour = new Date(now);
+          nextHour.setHours(now.getHours() + 1, 0, 0, 0);
+          startTime = nextHour.toISOString();
+        }
+        
+        // Calculate end time based on duration or default to 30 minutes
+        if (!endTime && startTime) {
+          const start = new Date(startTime);
+          let durationMinutes = 30; // Default
+          
+          // If duration is provided, use it
+          if (action.duration) {
+            durationMinutes = parseInt(action.duration) || 30;
+          }
+          
+          endTime = new Date(start.getTime() + durationMinutes * 60 * 1000).toISOString();
+        }
+        
         result = await createEvent(req.accessToken, {
           summary: action.summary,
-          startTime: action.startTime,
-          endTime: action.endTime,
+          startTime: startTime,
+          endTime: endTime,
           description: action.description,
           attendees: action.attendees
         });

@@ -61,7 +61,11 @@ const tools = [
           },
           endTime: {
             type: 'string',
-            description: 'Event end datetime in ISO 8601 format'
+            description: 'Event end datetime in ISO 8601 format. If not provided, defaults to 30 minutes after startTime'
+          },
+          duration: {
+            type: 'number',
+            description: 'Meeting duration in minutes (optional). If provided, endTime should be calculated automatically'
           },
           description: {
             type: 'string',
@@ -78,7 +82,7 @@ const tools = [
             description: 'List of attendee emails (optional)'
           }
         },
-        required: ['summary', 'startTime', 'endTime']
+        required: ['summary', 'startTime']
       }
     }
   },
@@ -140,11 +144,27 @@ export async function processWithLLM(messages, contextInfo = '') {
     const client = getOpenAI();
     
     // Add system message with context
-    let systemContent = `You are a concise calendar assistant. Current datetime: ${new Date().toISOString()}.
+    let systemContent = `You are an ultra-concise calendar assistant. Current datetime: ${new Date().toISOString()}.
 
-Help users manage calendar events. Convert relative times ("tomorrow at 3pm") to ISO 8601.
-If you need info (time, title, attendees), ask briefly.
-Keep responses SHORT (1-2 sentences max). This is a voice interface.`;
+Use minimal words.
+- "Schedule meeting with John tomorrow 3pm" → Create event immediately
+- "Cancel my 3pm" → Delete the 3pm event
+- "What's tomorrow?" → List tomorrow's events
+- If missing info: Ask ONE short question only
+
+SMART DEFAULTS:
+- If user provides start time + duration: Calculate end time automatically
+- If user provides start time but no duration: Use 30 minutes default
+- If user refuses/unable to provide start time after 2 attempts: Use next available hour as start time
+- Always try to extract time from user input first
+
+Examples of good responses:
+- "Create 'Meeting with John' tomorrow 3pm?"
+- "What time?"
+- "Done"
+- "You have 3 meetings tomorrow"
+
+NEVER use phrases like "I'll help you" or "Let me". Just state the action or ask the question.`;
 
     if (contextInfo) {
       systemContent += `\n\nContext:\n${contextInfo}`;
