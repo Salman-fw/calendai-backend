@@ -127,7 +127,7 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
       
       const recentEvents = await getEvents(req.accessToken, {
         timeMin: twoMonthsAgo.toISOString(),
-        maxResults: 250
+        maxResults: 50
       });
 
       if (recentEvents.success) {
@@ -319,7 +319,7 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
       
       const recentEvents = await getEvents(req.accessToken, {
         timeMin: twoMonthsAgo.toISOString(),
-        maxResults: 100
+        maxResults: 50
       });
 
       if (recentEvents.success) {
