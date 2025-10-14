@@ -2,7 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { transcribeAudio } from '../services/whisperService.js';
 import { processWithLLM } from '../services/llmService.js';
-import { getEvents, createEvent, updateEvent, deleteEvent } from '../services/calendarService.js';
+import { getEvents, createEvent, updateEvent, deleteEvent, getCalendar } from '../services/calendarService.js';
 import { extractToken } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -163,11 +163,18 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
     });
 
     // Process with LLM
+    console.log('🔍 DEBUG - Transcribed text:', userMessage);
+    console.log('🔍 DEBUG - Conversation history before LLM:', JSON.stringify(conversationHistory, null, 2));
+    console.log('🔍 DEBUG - Context info:', contextInfo);
+
     const llmResponse = await processWithLLM(conversationHistory, contextInfo);
 
     if (!llmResponse.success) {
+      console.log('❌ DEBUG - LLM response failed:', llmResponse.error);
       return res.status(500).json(llmResponse);
     }
+
+    console.log('✅ DEBUG - LLM response success:', JSON.stringify(llmResponse, null, 2));
 
     // Check if GPT wants to call a tool
     if (llmResponse.toolCalls && llmResponse.toolCalls.length > 0) {
@@ -202,46 +209,83 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
         });
       }
 
+      // Add assistant response and tool result to history (even for confirmation)
+      conversationHistory.push({
+        role: 'assistant',
+        content: null,
+        tool_calls: llmResponse.toolCalls
+      });
+
+      conversationHistory.push({
+        role: 'tool',
+        tool_call_id: toolCall.id,
+        content: JSON.stringify({ status: 'pending_confirmation', action: { type: name, ...params } })
+      });
+
+      console.log('🔍 DEBUG - Updated conversation history after tool call:', JSON.stringify(conversationHistory, null, 2));
+
       // For mutating actions, return preview for confirmation
       const actionPreview = {
         type: name,
         ...params
       };
 
-      // Smart defaults for create events
-      if (name === 'create_calendar_event') {
-        // Validate required attendees
-        if (!params.attendees || params.attendees.length === 0) {
-          return res.json({
-            success: true,
-            response: "Who should attend this meeting?",
-            needsClarification: true,
-            conversationHistory
-          });
-        }
+        // Smart defaults for create events
+        if (name === 'create_calendar_event') {
+          // Validate required attendees
+          if (!params.attendees || params.attendees.length === 0) {
+            return res.json({
+              success: true,
+              response: "Who should attend this meeting?",
+              needsClarification: true,
+              conversationHistory
+            });
+          }
 
-        // If no start time after multiple attempts, use next available hour
-        if (!params.startTime) {
-          const now = new Date();
-          const nextHour = new Date(now);
-          nextHour.setHours(now.getHours() + 1, 0, 0, 0);
-          actionPreview.startTime = nextHour.toISOString();
-        }
-        
-        // Calculate end time based on duration or default to 30 minutes
-        if (!params.endTime && actionPreview.startTime) {
-          const startTime = new Date(actionPreview.startTime);
-          let durationMinutes = 30; // Default
-          
-          // If duration is provided in params, use it
-          if (params.duration) {
-            durationMinutes = parseInt(params.duration) || 30;
+          // If no start time after multiple attempts, use next available hour
+          if (!params.startTime) {
+            const now = new Date();
+            const nextHour = new Date(now);
+            nextHour.setHours(now.getHours() + 1, 0, 0, 0);
+            actionPreview.startTime = nextHour.toISOString();
           }
           
-          const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
-          actionPreview.endTime = endTime.toISOString();
+          // Calculate end time based on duration or default to 30 minutes
+          if (!params.endTime && actionPreview.startTime) {
+            const startTime = new Date(actionPreview.startTime);
+            let durationMinutes = 30; // Default
+            
+            // If duration is provided in params, use it
+            if (params.duration) {
+              durationMinutes = parseInt(params.duration) || 30;
+            }
+            
+            const endTime = new Date(startTime.getTime() + durationMinutes * 60 * 1000);
+            actionPreview.endTime = endTime.toISOString();
+          }
         }
-      }
+
+        // For delete events, fetch event details for confirmation
+        if (name === 'delete_calendar_event' && params.eventId) {
+          try {
+            const calendar = getCalendar(req.accessToken);
+            const eventResponse = await calendar.events.get({
+              calendarId: 'primary',
+              eventId: params.eventId
+            });
+            
+            const event = eventResponse.data;
+            actionPreview.eventDetails = {
+              summary: event.summary,
+              description: event.description,
+              start: event.start,
+              end: event.end,
+              attendees: event.attendees
+            };
+          } catch (error) {
+            console.error('Failed to fetch event details for deletion:', error);
+          }
+        }
 
       // Generate confirmation message
       let confirmationMessage = '';
@@ -253,7 +297,13 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
           confirmationMessage = `Update event "${params.summary || 'this event'}"?`;
           break;
         case 'delete_calendar_event':
-          confirmationMessage = `Delete this event?`;
+          if (actionPreview.eventDetails) {
+            const startTime = new Date(actionPreview.eventDetails.start.dateTime || actionPreview.eventDetails.start.date);
+            const timeStr = startTime.toLocaleString();
+            confirmationMessage = `Delete "${actionPreview.eventDetails.summary}" on ${timeStr}?`;
+          } else {
+            confirmationMessage = `Delete "${params.summary || 'this event'}"?`;
+          }
           break;
         default:
           confirmationMessage = 'Confirm this action?';
@@ -398,13 +448,20 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
       content: userMessage
     });
 
+    console.log('🔍 DEBUG - Transcribed text:', userMessage);
+    console.log('🔍 DEBUG - Conversation history before LLM:', JSON.stringify(conversationHistory, null, 2));
+    console.log('🔍 DEBUG - Context info:', contextInfo);
+
     const llmResponse = await processWithLLM(conversationHistory, contextInfo);
 
     if (!llmResponse.success) {
+      console.log('❌ DEBUG - LLM response failed:', llmResponse.error);
       res.write(`data: ${JSON.stringify({ type: 'error', error: llmResponse.error })}\n\n`);
       res.end();
       return;
     }
+
+    console.log('✅ DEBUG - LLM response success:', JSON.stringify(llmResponse, null, 2));
 
     // Step 4: Send result
     if (llmResponse.toolCalls && llmResponse.toolCalls.length > 0) {
@@ -434,10 +491,24 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
           type: 'response',
           response: finalResponse.message || 'Here are your events',
           executed: true,
-          result: toolResult,
-          conversationHistory
+          result: toolResult
         })}\n\n`);
       } else {
+        // Add assistant response and tool result to history (even for confirmation)
+        conversationHistory.push({
+          role: 'assistant',
+          content: null,
+          tool_calls: llmResponse.toolCalls
+        });
+
+        conversationHistory.push({
+          role: 'tool',
+          tool_call_id: toolCall.id,
+          content: JSON.stringify({ status: 'pending_confirmation', action: { type: name, ...params } })
+        });
+
+        console.log('🔍 DEBUG - Updated conversation history after tool call (SSE):', JSON.stringify(conversationHistory, null, 2));
+
         // Mutating action - request confirmation
         const actionPreview = {
           type: name,
@@ -451,8 +522,7 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
             res.write(`data: ${JSON.stringify({
               type: 'response',
               response: "Who should attend this meeting?",
-              needsClarification: true,
-              conversationHistory
+              needsClarification: true
             })}\n\n`);
             res.end();
             return;
@@ -481,6 +551,28 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
           }
         }
 
+        // For delete events, fetch event details for confirmation
+        if (name === 'delete_calendar_event' && params.eventId) {
+          try {
+            const calendar = getCalendar(req.accessToken);
+            const eventResponse = await calendar.events.get({
+              calendarId: 'primary',
+              eventId: params.eventId
+            });
+            
+            const event = eventResponse.data;
+            actionPreview.eventDetails = {
+              summary: event.summary,
+              description: event.description,
+              start: event.start,
+              end: event.end,
+              attendees: event.attendees
+            };
+          } catch (error) {
+            console.error('Failed to fetch event details for deletion:', error);
+          }
+        }
+
         let confirmationMessage = '';
         switch (name) {
           case 'create_calendar_event':
@@ -489,9 +581,15 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
           case 'update_calendar_event':
             confirmationMessage = `Update event "${params.summary || 'this event'}"?`;
             break;
-          case 'delete_calendar_event':
-            confirmationMessage = `Delete this event?`;
-            break;
+        case 'delete_calendar_event':
+          if (actionPreview.eventDetails) {
+            const startTime = new Date(actionPreview.eventDetails.start.dateTime || actionPreview.eventDetails.start.date);
+            const timeStr = startTime.toLocaleString();
+            confirmationMessage = `Delete "${actionPreview.eventDetails.summary}" on ${timeStr}?`;
+          } else {
+            confirmationMessage = `Delete "${params.summary || 'this event'}"?`;
+          }
+          break;
           default:
             confirmationMessage = 'Confirm this action?';
         }
@@ -500,8 +598,7 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
           type: 'response',
           response: confirmationMessage,
           needsConfirmation: true,
-          action: actionPreview,
-          conversationHistory
+          action: actionPreview
         })}\n\n`);
       }
     } else {
@@ -514,8 +611,7 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
       res.write(`data: ${JSON.stringify({
         type: 'response',
         response: llmResponse.message,
-        needsClarification: true,
-        conversationHistory
+        needsClarification: true
       })}\n\n`);
     }
 
