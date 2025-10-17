@@ -400,16 +400,18 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
     // Step 1: Transcribe audio
     let userMessage;
     if (req.file) {
-    // Reject audio larger than 1.5 MB
-    const MAX_AUDIO_BYTES = 1.5 * 1024 * 1024;
-    if (req.file.size && req.file.size > MAX_AUDIO_BYTES) {
-      res.write(`data: ${JSON.stringify({
-        type: 'response',
-        response: "I'm sorry, I couldn't keep track of what you're saying. Could you summarize ? For longer commands, you can also consider upgrading to our CalendAI Plus plan !"
-      })}\n\n`);
-      res.end();
-      return;
-    }
+      // Log audio file size
+      console.log(`Received audio file: ${req.file.originalname}, size: ${req.file.size} bytes`);
+      // Reject audio larger than 1.5 MB
+      const MAX_AUDIO_BYTES = 250 * 1024; // 1 KB limit
+      if (req.file.size && req.file.size > MAX_AUDIO_BYTES) {
+        res.write(`data: ${JSON.stringify({
+          type: 'response',
+          response: "I'm sorry, I couldn't keep track of what you're saying. Could you summarize ? For longer commands, you can also consider upgrading to our CalendAI Plus plan !"
+        })}\n\n`);
+        res.end();
+        return;
+      }
 
       const transcription = await transcribeAudio(req.file.buffer, req.file.originalname);
       

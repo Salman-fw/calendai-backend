@@ -33,3 +33,8 @@ build/
 CONTEXT.md
 
 
+
+# Firebase service account keys (NEVER commit these!)
+service-account-key.json
+*-firebase-adminsdk-*.json
+firebase-service-account.json

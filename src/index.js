@@ -5,6 +5,7 @@ import transcribeRoutes from './routes/transcribeRoutes.js';
 import calendarRoutes from './routes/calendarRoutes.js';
 import voiceRoutes from './routes/voiceRoutes.js';
 import { requestLogger, errorLogger } from './middleware/logger.js';
+import authAndRateLimit from './middleware/authAndRateLimit.js';
 
 // Load environment variables
 dotenv.config();
@@ -16,6 +17,9 @@ const PORT = process.env.PORT || 8080;
 app.use(cors());
 app.use(express.json());
 app.use(requestLogger);
+
+// Apply authentication + rate limiting to all /api/* routes
+app.use('/api', authAndRateLimit);
 
 // Routes
 app.use('/api', transcribeRoutes);
