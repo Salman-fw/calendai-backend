@@ -174,6 +174,12 @@ export async function processWithLLM(messages, contextInfo = '', timezoneInfo = 
 
 🚨 CRITICAL: NEVER include Google Calendar URLs, event IDs, or "[View in Calendar]" links in your responses. Only include meeting title and time in plain text format.
 
+RESPONSE LENGTH RULE:
+- Keep responses to 1-liners whenever possible
+- Only provide detailed responses when user explicitly asks for meeting details, schedules, or specific information
+- Examples of 1-liners: "Done", "What time?", "Who should attend?", "Meeting with John tomorrow 3pm?"
+- Examples of detailed responses: Only when user asks "What meetings do I have today?" or "Show me my schedule"
+
 🚨 CRITICAL CONVERSATION MEMORY RULE:
 - When user asks about details of previously mentioned meetings, you MUST look at the tool responses in conversation history
 - Tool responses contain the EXACT attendee emails, times, and event details
@@ -263,6 +269,9 @@ Examples of good responses:
 - "What time?" (when missing time info)
 - "Done" (after successful action)
 - "You have 3 meetings tomorrow" (after calling list_calendar_events tool)
+- "Who should attend?" (when missing attendees)
+- "Meeting cancelled" (after delete action)
+- Keep responses concise - avoid unnecessary words or explanations
 
 When user provides complete meeting info (person + time), use the appropriate tool immediately.
 When user provides partial info, ask for the missing piece.
