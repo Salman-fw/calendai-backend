@@ -101,18 +101,19 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
     let contextInfo = '';
     
     try {
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const todayEnd = new Date();
-      todayEnd.setHours(23, 59, 59, 999);
+      const start = new Date();
+      start.setDate(start.getDate() - 1); 
+      start.setHours(0, 0, 0, 0);
+      const end = new Date();
+      end.setHours(23, 59, 59, 999);
       
-      const todayEvents = await getEvents(req.accessToken, {
-        timeMin: todayStart.toISOString(),
-        timeMax: todayEnd.toISOString()
+      const events = await getEvents(req.accessToken, {
+        timeMin: start.toISOString(),
+        timeMax: end.toISOString()
       });
 
-      if (todayEvents.success && todayEvents.events.length > 0) {
-        const meetingsList = todayEvents.events
+      if (events.success && events.events.length > 0) {
+        const meetingsList = events.events
           .map(e => {
             const start = new Date(e.start.dateTime || e.start.date);
             const time = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
@@ -167,10 +168,11 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
     console.log('🔍 DEBUG - Conversation history before LLM:', JSON.stringify(conversationHistory, null, 2));
     console.log('🔍 DEBUG - Context info:', contextInfo);
 
-    // Extract timezone information from headers
+    // Extract timezone and timestamp information from headers
     const timezoneInfo = {
       deviceTimezone: req.headers['x-device-timezone'],
-      timezoneOffset: req.headers['x-device-timezone-offset']
+      timezoneOffset: req.headers['x-device-timezone-offset'],
+      deviceTimestamp: req.headers['x-device-timestamp']
     };
 
     const llmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo);
@@ -443,6 +445,7 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
       });
 
       if (recentEvents.success) {
+        // Log the full context of past 2 months' meetings        
         const contactMap = new Map(); // email -> {name, email}
         recentEvents.events.forEach(event => {
           if (event.attendees) {
@@ -463,6 +466,9 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
             .join(', ');
           contextInfo += `Recent contacts: ${contactsList}`;
         }
+
+        console.log('🔍 \n\n\n\n\nDEBUG - Past 2 months meetings context:', JSON.stringify(recentEvents.events, null, 2));
+
       }
     } catch (error) {
       console.error('Failed to fetch context:', error);
@@ -479,10 +485,11 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
     console.log('🔍 DEBUG - Conversation history before LLM:', JSON.stringify(conversationHistory, null, 2));
     console.log('🔍 DEBUG - Context info:', contextInfo);
 
-    // Extract timezone information from headers
+    // Extract timezone and timestamp information from headers
     const timezoneInfo = {
       deviceTimezone: req.headers['x-device-timezone'],
-      timezoneOffset: req.headers['x-device-timezone-offset']
+      timezoneOffset: req.headers['x-device-timezone-offset'],
+      deviceTimestamp: req.headers['x-device-timestamp']
     };
 
     const llmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo);
@@ -520,12 +527,17 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
 
         const finalResponse = await processWithLLM(conversationHistory);
 
-        res.write(`data: ${JSON.stringify({
+        const streamResponse = {
           type: 'response',
           response: finalResponse.message || 'Here are your events',
           executed: true,
           result: toolResult
-        })}\n\n`);
+        };
+        
+        console.log('📤 STREAM API RESPONSE (list_calendar_events):');
+        console.log(JSON.stringify(streamResponse, null, 2));
+
+        res.write(`data: ${JSON.stringify(streamResponse)}\n\n`);
       } else {
         // Add assistant response and tool result to history (even for confirmation)
         conversationHistory.push({
@@ -649,12 +661,17 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
             confirmationMessage = 'Confirm this action?';
         }
 
-        res.write(`data: ${JSON.stringify({
+        const confirmationResponse = {
           type: 'response',
           response: confirmationMessage,
           needsConfirmation: true,
           action: actionPreview
-        })}\n\n`);
+        };
+        
+        console.log('📤 STREAM API RESPONSE (confirmation needed):');
+        console.log(JSON.stringify(confirmationResponse, null, 2));
+
+        res.write(`data: ${JSON.stringify(confirmationResponse)}\n\n`);
       }
     } else {
       // Clarification needed
@@ -663,11 +680,16 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
         content: llmResponse.message
       });
 
-      res.write(`data: ${JSON.stringify({
+      const clarificationResponse = {
         type: 'response',
         response: llmResponse.message,
         needsClarification: true
-      })}\n\n`);
+      };
+      
+      console.log('📤 STREAM API RESPONSE (clarification needed):');
+      console.log(JSON.stringify(clarificationResponse, null, 2));
+
+      res.write(`data: ${JSON.stringify(clarificationResponse)}\n\n`);
     }
 
     res.end();
@@ -683,6 +705,9 @@ router.post('/execute', extractToken, async (req, res) => {
   try {
     const { action, confirmed } = req.body;
 
+    console.log('📥 EXECUTE API REQUEST:');
+    console.log(JSON.stringify({ action, confirmed }, null, 2));
+
     if (!action) {
       return res.status(400).json({
         success: false,
@@ -692,11 +717,16 @@ router.post('/execute', extractToken, async (req, res) => {
 
     // User cancelled
     if (!confirmed) {
-      return res.json({
+      const cancelResponse = {
         success: true,
         response: 'Action cancelled',
         cancelled: true
-      });
+      };
+      
+      console.log('📤 EXECUTE API RESPONSE (cancelled):');
+      console.log(JSON.stringify(cancelResponse, null, 2));
+      
+      return res.json(cancelResponse);
     }
 
     // Validate action type
@@ -801,11 +831,16 @@ router.post('/execute', extractToken, async (req, res) => {
     }
 
     if (result.success) {
-      return res.json({
+      const executeResponse = {
         success: true,
         response: 'Action completed successfully',
         result
-      });
+      };
+      
+      console.log('📤 EXECUTE API RESPONSE (success):');
+      console.log(JSON.stringify(executeResponse, null, 2));
+      
+      return res.json(executeResponse);
     } else {
       return res.status(500).json(result);
     }

@@ -154,10 +154,37 @@ export async function processWithLLM(messages, contextInfo = '', timezoneInfo = 
   try {
     const client = getOpenAI();
     
+    // Calculate user's local time based on timezone offset
+    let currentTime = new Date().toISOString();
+    if (timezoneInfo.timezoneOffset) {
+      const offsetMinutes = parseInt(timezoneInfo.timezoneOffset);
+      const userLocalTime = new Date(Date.now() + offsetMinutes * 60000);
+      // Format as YYYY-MM-DD HH:MM:SS in user's timezone
+      const year = userLocalTime.getUTCFullYear();
+      const month = String(userLocalTime.getUTCMonth() + 1).padStart(2, '0');
+      const day = String(userLocalTime.getUTCDate()).padStart(2, '0');
+      const hours = String(userLocalTime.getUTCHours()).padStart(2, '0');
+      const minutes = String(userLocalTime.getUTCMinutes()).padStart(2, '0');
+      const seconds = String(userLocalTime.getUTCSeconds()).padStart(2, '0');
+      currentTime = `${year}-${month}-${day} ${hours}:${minutes}:${seconds} (${timezoneInfo.deviceTimezone || 'UTC+' + (offsetMinutes/60)})`;
+    }
+    
     // Add system message with context
-    let systemContent = `You are an ultra-concise calendar assistant. Current datetime: ${new Date().toISOString()}.
+      let systemContent = `You are a precise voice-controlled calendar assistant. Current datetime in user's timezone: ${currentTime}.
 
-VOICE COMMAND EXAMPLES (non-exhaustive, just to give you an idea):
+🚨 CRITICAL: NEVER include Google Calendar URLs, event IDs, or "[View in Calendar]" links in your responses. Only include meeting title and time in plain text format.
+
+🚨 CRITICAL CONVERSATION MEMORY RULE:
+- When user asks about details of previously mentioned meetings, you MUST look at the tool responses in conversation history
+- Tool responses contain the EXACT attendee emails, times, and event details
+- NEVER guess or make up email addresses - always extract from tool response data
+- If you see a tool response with attendee data, use that exact email address
+- Example: If tool response shows "email": "salman@futurewatch.com", then say "salman@futurewatch.com" not "sam@example.com"
+- In case of multiple meetings or any other ambiguity, ask the user to clarify or make a new tool call to search for the meeting, and reference those to request user for clarification.
+
+CRITICAL: Input comes from voice transcription and may contain errors. Be skeptical of:
+- Unusual names or spellings (e.g., "Salman" vs "Salmon", "Mira" vs "Mirror")
+- Email addresses (voice transcription often mangles these)
 
 CREATE MEETINGS:
 - "Schedule meeting with John tomorrow 3pm" → create_calendar_event
@@ -187,6 +214,15 @@ LIST MEETINGS:
 - "What meetings do I have this week?" → list_calendar_events
 - "Do I have any meetings with John?" → list_calendar_events
 
+CRITICAL DATE PRECISION:
+- When user asks for "today", query ONLY the current date (same date as shown in "Current datetime")
+- Example: If current datetime shows "2025-10-17", then "today" = 2025-10-17T00:00:00+05:00 to 2025-10-17T23:59:59+05:00
+- NEVER query multiple days for "today" - use exact date boundaries
+- For "tomorrow" or similar, query the day after the current date
+- For "yesterday" or similar, query the day before the current date
+- For "this week" or similar, query from current date to 7 days later
+- For "last month" or similar, query from 28/29/30/31 days ago to current date (whichever is correct)
+
 If missing info: Ask ONE short question only
 
 SMART DEFAULTS:
@@ -208,6 +244,20 @@ DISAMBIGUATION RULES:
 - Example: "Delete meeting with Salman" but 2 Salman meetings → Ask "Which meeting...?", reference some of the meeting details
 - NEVER make multiple tool calls for the same action - always disambiguate first
 
+CONVERSATION MEMORY & CONTEXT USAGE:
+- ALWAYS check conversation history for previous tool responses when answering questions about past events
+- When user asks about attendees, times, or details of previously MENTIONED meetings i.e. they were mentioned in the conversation history, extract this information from the conversation history
+- Tool responses contain complete event details - use this data instead of guessing or hallucinating
+- Example: If user asks "Who was in my meeting with Sam?" and you previously called list_calendar_events, look at the tool response for attendee details
+- NEVER make up email addresses or meeting details - always use data from previous tool calls
+- If you don't have the information in conversation history, ask the user to clarify or make a new tool call
+
+ACCURATE DATA EXTRACTION:
+- When referencing past events, extract exact details from tool responses in conversation history
+- Attendee emails, meeting times, and event IDs should come from actual tool responses, not assumptions
+- If multiple events match a question, reference the specific event details from the tool response
+- Example: "The attendee was salman@futurewatch.com" (from tool response) not "john@example.com" (hallucinated)
+
 Examples of good responses:
 - "Create 'Meeting with John' tomorrow 3pm?" (after calling create_calendar_event tool)
 - "What time?" (when missing time info)
@@ -226,11 +276,31 @@ Context:\n${contextInfo}`;
     }
 
     // Add timezone information if available
-    if (timezoneInfo.deviceTimezone || timezoneInfo.timezoneOffset) {
+    if (timezoneInfo.deviceTimezone || timezoneInfo.timezoneOffset) { 
       systemContent += `\n\nUSER TIMEZONE INFO:
 - Device Timezone: ${timezoneInfo.deviceTimezone || 'Not provided'}
 - Timezone Offset: ${timezoneInfo.timezoneOffset ? `${timezoneInfo.timezoneOffset} minutes from UTC` : 'Not provided'}
-- All time references should be interpreted in the user's timezone`;
+- All time references should be interpreted in the user's timezone
+
+CRITICAL TIMEZONE HANDLING FOR TOOL CALLS:
+- When making tool calls (create_calendar_event, update_calendar_event, list_calendar_events), ALL datetime parameters MUST be in ISO 8601 format with the user's timezone offset
+- Example: If user says "3pm tomorrow" and their timezone offset is +300 minutes (UTC+5), the startTime should be: "2025-10-17T15:00:00+05:00"
+- For list_calendar_events: timeMin and timeMax must include the user's timezone offset
+- For create_calendar_event: startTime and endTime must include the user's timezone offset  
+- For update_calendar_event: startTime and endTime must include the user's timezone offset, unless being reused from the existing event, e.g. user asked to rename the meeting, in that case keep the existing times.
+- NEVER send UTC times without timezone offset - always include the user's timezone in the ISO string
+
+CRITICAL RESPONSE FORMATTING RULES:
+- ABSOLUTELY FORBIDDEN: Never include Google Calendar URLs, event IDs, or any technical links in your response
+- ABSOLUTELY FORBIDDEN: Never include "[View in Calendar]" links or similar
+- ABSOLUTELY FORBIDDEN: Never include any URLs or technical identifiers
+- ONLY include: meeting title, time, and duration (if relevant)
+- For list_calendar_events: Use simple format like "You have 2 meetings today: Meeting with Sam at 8:00 AM and Physio at 9:30 PM"
+- NEVER use markdown formatting like **bold** or bullet points in voice responses
+- Keep responses plain text, suitable for text-to-speech
+- Example CORRECT: "You have 2 meetings today: Meeting with Sam at 8:00 AM and Physio at 9:30 PM"
+- Example WRONG: "You have 2 meetings today:\n- \"Meeting with Sam\" at 8:00 AM\n- \"Physio\" at 9:30 PM"
+`;
     }
 
     const systemMessage = {
@@ -238,14 +308,22 @@ Context:\n${contextInfo}`;
       content: systemContent
     };
 
+    const allMessages = [systemMessage, ...messages];
+    
+    console.log('🔵 LLM INPUT - Full messages array:');
+    console.log(JSON.stringify(allMessages, null, 2));
+
     const response = await client.chat.completions.create({
       model: 'gpt-4-turbo-preview',
-      messages: [systemMessage, ...messages],
+      messages: allMessages,
       tools,
       tool_choice: 'auto'
     });
 
     const responseMessage = response.choices[0].message;
+
+    console.log('🟢 LLM OUTPUT - Response message:');
+    console.log(JSON.stringify(responseMessage, null, 2));
 
     return {
       success: true,
