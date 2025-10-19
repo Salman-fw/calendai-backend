@@ -31,7 +31,8 @@ export async function transcribeAudio(audioBuffer, filename = 'audio.webm') {
     const transcription = await client.audio.transcriptions.create({
       file: file,
       model: 'whisper-1',
-      language: 'en'
+      language: 'en',
+      service_tier:"priority"
     });
 
     return {

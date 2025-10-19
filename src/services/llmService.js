@@ -323,10 +323,12 @@ CRITICAL RESPONSE FORMATTING RULES:
     console.log(JSON.stringify(allMessages, null, 2));
 
     const response = await client.chat.completions.create({
-      model: 'gpt-4-turbo-preview',
+      model: 'gpt-5-mini',
       messages: allMessages,
       tools,
-      tool_choice: 'auto'
+      tool_choice: 'auto',
+      service_tier:"priority"
+
     });
 
     const responseMessage = response.choices[0].message;
