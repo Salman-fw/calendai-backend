@@ -531,7 +531,7 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
       const { name, arguments: args } = toolCall.function;
       const params = JSON.parse(args);
 
-      // Read-only action - execute immediately
+      // Read-only action - execute and check if followed by mutating action
       if (name === 'list_calendar_events') {
         const toolResult = await executeTool(toolCall, req.accessToken);
 
@@ -547,11 +547,109 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
           content: JSON.stringify(toolResult)
         });
 
-        const finalResponse = await processWithLLM(conversationHistory);
+        // Get LLM's next response to see if it wants to do a mutating action
+        const nextLlmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo);
 
+        // If LLM wants to do a mutating action next, skip sending list result to user
+        if (nextLlmResponse.toolCalls && nextLlmResponse.toolCalls.length > 0) {
+          const nextToolCall = nextLlmResponse.toolCalls[0];
+          const nextName = nextToolCall.function.name;
+          
+          // If next action is mutating, continue to that instead of sending list result
+          if (nextName === 'create_calendar_event' || nextName === 'delete_calendar_event' || nextName === 'update_calendar_event') {
+            console.log(`🔄 List followed by ${nextName}, skipping list response to user`);
+            
+            // Update conversation history with next tool call
+            conversationHistory.push({
+              role: 'assistant',
+              content: null,
+              tool_calls: nextLlmResponse.toolCalls
+            });
+
+            // Process the mutating action
+            const nextParams = JSON.parse(nextToolCall.function.arguments);
+            
+            conversationHistory.push({
+              role: 'tool',
+              tool_call_id: nextToolCall.id,
+              content: JSON.stringify({ status: 'pending_confirmation', action: { type: nextName, ...nextParams } })
+            });
+
+            // Now handle the mutating action confirmation (reuse existing logic below)
+            const actionPreview = {
+              type: nextName,
+              ...nextParams
+            };
+
+            // For delete and update events, fetch event details for confirmation
+            if ((nextName === 'delete_calendar_event' || nextName === 'update_calendar_event') && nextParams.eventId) {
+              try {
+                const calendar = getCalendar(req.accessToken);
+                const eventResponse = await calendar.events.get({
+                  calendarId: 'primary',
+                  eventId: nextParams.eventId
+                });
+                
+                const event = eventResponse.data;
+                actionPreview.eventDetails = {
+                  summary: event.summary,
+                  description: event.description,
+                  start: event.start,
+                  end: event.end,
+                  attendees: event.attendees
+                };
+              } catch (error) {
+                console.error(`Failed to fetch event details for ${nextName}:`, error);
+              }
+            }
+
+            let confirmationMessage = '';
+            switch (nextName) {
+              case 'create_calendar_event':
+                confirmationMessage = `Create "${nextParams.summary}" on ${new Date(nextParams.startTime).toLocaleString()}?`;
+                break;
+              case 'update_calendar_event':
+                if (actionPreview.eventDetails) {
+                  const startTime = new Date(actionPreview.eventDetails.start.dateTime || actionPreview.eventDetails.start.date);
+                  const timeStr = startTime.toLocaleString();
+                  confirmationMessage = `Update "${actionPreview.eventDetails.summary}" on ${timeStr}?`;
+                } else {
+                  confirmationMessage = `Update event "${nextParams.summary || 'this event'}"?`;
+                }
+                break;
+              case 'delete_calendar_event':
+                if (actionPreview.eventDetails) {
+                  const startTime = new Date(actionPreview.eventDetails.start.dateTime || actionPreview.eventDetails.start.date);
+                  const timeStr = startTime.toLocaleString();
+                  confirmationMessage = `Delete "${actionPreview.eventDetails.summary}" on ${timeStr}?`;
+                } else {
+                  confirmationMessage = `Delete "${nextParams.summary || 'this event'}"?`;
+                }
+                break;
+              default:
+                confirmationMessage = 'Confirm this action?';
+            }
+
+            const confirmationResponse = {
+              type: 'response',
+              response: confirmationMessage,
+              needsConfirmation: true,
+              action: actionPreview
+            };
+            
+            console.log('📤 STREAM API RESPONSE (confirmation after list):');
+            console.log(JSON.stringify(confirmationResponse, null, 2));
+            
+            res.write(`data: ${JSON.stringify(confirmationResponse)}\n\n`);
+            res.end();
+            return;
+          }
+        }
+
+        // If no mutating action follows, send list result to user
         const streamResponse = {
           type: 'response',
-          response: finalResponse.message || 'Here are your events',
+          response: nextLlmResponse.message || 'Here are your events',
           executed: true,
           result: toolResult
         };
