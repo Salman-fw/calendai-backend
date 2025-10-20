@@ -13,7 +13,7 @@ function getOpenAI() {
     
     try {
       openai = new OpenAI({ apiKey });
-      console.log('✅ OpenAI Whisper service initialized successfully');
+      console.log('✅ OpenAI GPT-4o Transcribe service initialized successfully');
     } catch (error) {
       console.error('❌ Failed to initialize OpenAI service:', error.message);
       throw error;
@@ -30,9 +30,9 @@ export async function transcribeAudio(audioBuffer, filename = 'audio.webm') {
     
     const transcription = await client.audio.transcriptions.create({
       file: file,
-      model: 'whisper-1',
-      language: 'en',
-      service_tier:"priority"
+      model: 'gpt-4o-mini-transcribe',
+      service_tier:"priority",
+      language: 'en'
     });
 
     return {
@@ -40,7 +40,7 @@ export async function transcribeAudio(audioBuffer, filename = 'audio.webm') {
       text: transcription.text
     };
   } catch (error) {
-    console.error('Whisper API error:', error);
+    console.error('GPT-4o Transcribe API error:', error);
     return {
       success: false,
       error: error.message
