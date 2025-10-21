@@ -973,5 +973,132 @@ router.post('/execute', extractToken, async (req, res) => {
   }
 });
 
+// POST /api/voice/check - Check if action needs confirmation (non-SSE)
+router.post('/widget', extractToken, upload.single('audio'), async (req, res) => {
+  console.log('🔍 DEBUG - Widget API REQUEST:');
+  try {
+    let userMessage;
+    let conversationHistory = [];
+
+    // Parse conversation history if provided
+    if (req.body.history) {
+      try {
+        conversationHistory = JSON.parse(req.body.history);
+      } catch (e) {
+        console.error('Failed to parse history:', e);
+      }
+    }
+
+    // Handle audio input
+    if (req.file) {
+      const transcription = await transcribeAudio(req.file.buffer, req.file.originalname);
+      
+      if (!transcription.success) {
+        return res.status(500).json(transcription);
+      }
+      
+      userMessage = transcription.text;
+    } else if (req.body.text) {
+      userMessage = req.body.text;
+    } else {
+      return res.status(400).json({ success: false, error: 'No audio or text input provided' });
+    }
+
+    // Add user message to conversation
+    conversationHistory.push({ role: 'user', content: userMessage });
+
+    // Process with LLM - loop up to 3 times to find mutating action
+    let llmResponse;
+    let attempts = 0;
+    const maxAttempts = 3;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      llmResponse = await processWithLLM(conversationHistory, {}, {});
+
+      if (llmResponse.toolCalls && llmResponse.toolCalls.length > 0) {
+        const toolCall = llmResponse.toolCalls[0];
+        const { name, arguments: args } = toolCall.function;
+        const params = JSON.parse(args);
+
+        // Check if it's a mutating action that needs confirmation
+        if (name === 'create_calendar_event' || name === 'delete_calendar_event' || name === 'update_calendar_event') {
+          const actionPreview = {
+            type: name,
+            ...params
+          };
+
+          // For delete and update events, fetch event details for confirmation
+          if ((name === 'delete_calendar_event' || name === 'update_calendar_event') && params.eventId) {
+            try {
+              const calendar = getCalendar(req.accessToken);
+              const eventResponse = await calendar.events.get({
+                calendarId: 'primary',
+                eventId: params.eventId
+              });
+              
+              const event = eventResponse.data;
+              actionPreview.eventDetails = {
+                summary: event.summary,
+                description: event.description,
+                start: event.start,
+                end: event.end,
+                attendees: event.attendees
+              };
+            } catch (error) {
+              console.error(`Failed to fetch event details for ${name}:`, error);
+            }
+          }
+
+          return res.json({
+            success: true,
+            needsConfirmation: true,
+            action: actionPreview
+          });
+        }
+
+        // If it's a read-only action, execute it and continue
+        if (name === 'list_calendar_events') {
+          try {
+            const toolResult = await executeTool(toolCall, req.accessToken);
+            
+            // Add assistant response and tool result to history
+            conversationHistory.push({
+              role: 'assistant',
+              content: null,
+              tool_calls: llmResponse.toolCalls
+            });
+
+            conversationHistory.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: JSON.stringify(toolResult)
+            });
+          } catch (error) {
+            console.error('Tool execution error:', error);
+            break;
+          }
+        }
+      } else {
+        // No tool calls, break the loop
+        break;
+      }
+    }
+
+    // No mutating action found after max attempts
+    return res.json({
+      success: true,
+      needsConfirmation: null
+    });
+
+  } catch (error) {
+    console.error('Check action error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 export default router;
 
