@@ -42,7 +42,7 @@ export async function transcribeAudio(audioBuffer, originalFilename = "audio.m4a
     // ✅ Call OpenAI transcription API
     const transcription = await client.audio.transcriptions.create({
       file,
-      model: "gpt-4o-mini-transcribe",
+      model: "gpt-4o-transcribe",
       service_tier:"priority",
       language: "en",
     });
