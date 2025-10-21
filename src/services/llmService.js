@@ -176,7 +176,7 @@ export async function processWithLLM(messages, contextInfo = '', timezoneInfo = 
 
 RESPONSE LENGTH RULE:
 - Keep responses to 1-liners whenever possible
-- If you are providing any datetime/s in your response, you MUST add the timezone offset to the datetime/s.
+- If you are providing any datetime/s in your response, you MUST add the timezone offset to the datetime/s and they must be human readable / customer presentable format.
 - Only provide detailed responses when user explicitly asks for meeting details, schedules, or specific information
 - Examples of 1-liners: "Done", "What time?", "Who should attend?", "Meeting with John tomorrow 3pm?"
 - Examples of detailed responses: Only when user asks "What meetings do I have today?" or "Show me my schedule"
@@ -222,7 +222,7 @@ LIST MEETINGS:
 - "Do I have any meetings with John?" → list_calendar_events
 
 CRITICAL DATE PRECISION:
-- IMPORTANT: if you add  datetime/s in your response, you MUST add the timezone offset to the datetime/s.
+- IMPORTANT: if you add  datetime/s in your response, you MUST add the timezone offset to the datetime/s and they must be human readable / customer presentable format.
 - When user asks for "today", query ONLY the current date (same date as shown in "Current datetime")
 - Example: If current datetime shows "2025-10-17", then "today" = 2025-10-17T00:00:00+05:00 to 2025-10-17T23:59:59+05:00
 - NEVER query multiple days for "today" - use exact date boundaries

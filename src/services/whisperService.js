@@ -1,4 +1,7 @@
-import OpenAI from 'openai';
+import OpenAI from "openai";
+import { fileTypeFromBuffer } from "file-type";
+
+
 
 let openai = null;
 
@@ -22,29 +25,32 @@ function getOpenAI() {
   return openai;
 }
 
-export async function transcribeAudio(audioBuffer, filename = 'audio.webm') {
+
+export async function transcribeAudio(audioBuffer, originalFilename = "audio.m4a") {
   const client = getOpenAI();
+
   try {
-    // Create a File-like object from buffer
-    const file = new File([audioBuffer], filename, { type: 'audio/webm' });
-    
+    const detected = await fileTypeFromBuffer(audioBuffer);
+    const ext = detected?.ext || "m4a";
+    const mime = detected?.mime || "audio/mp4";
+
+    console.log(`🎧 Detected format: ${ext} (${mime})`);
+
+    // ✅ Create in-memory File-like object
+    const file = new File([audioBuffer], `audio.${ext}`, { type: mime });
+
+    // ✅ Call OpenAI transcription API
     const transcription = await client.audio.transcriptions.create({
-      file: file,
-      model: 'gpt-4o-mini-transcribe',
+      file,
+      model: "gpt-4o-mini-transcribe",
       service_tier:"priority",
-      language: 'en'
+      language: "en",
     });
 
-    return {
-      success: true,
-      text: transcription.text
-    };
+    console.log("✅ Transcribed:", transcription.text);
+    return { success: true, text: transcription.text };
   } catch (error) {
-    console.error('GPT-4o Transcribe API error:', error);
-    return {
-      success: false,
-      error: error.message
-    };
+    console.error("❌ Transcribe error:", error.message);
+    return { success: false, error: error.message };
   }
 }
-
