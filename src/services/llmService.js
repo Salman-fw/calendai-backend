@@ -383,6 +383,7 @@ Context:\n${contextInfo}`;
     const response = await client.chat.completions.create({
       model: 'gpt-5-mini',
       messages: allMessages,
+      reasoning_effort: 'medium',
       tools,
       tool_choice: 'auto',
       service_tier:"priority"
