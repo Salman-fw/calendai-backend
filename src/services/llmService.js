@@ -159,6 +159,7 @@ IMPORTANT: All datetime and time references must be interpreted and presented in
   if (timezoneInfo.deviceTimezone || timezoneInfo.timezoneOffset) {
     tzSection += `
 USER TIMEZONE DETAILS:
+- Your/server time is UTC, so for example a user is in UTC+5, then 3pm UTC is 8pm in their timezone. So if you are about to say 3pm in your response, after factoring in the timezone offset, you must say 8 pm. You MUST adjust the time according to the user's timezone.
 - Device Timezone: ${timezoneInfo.deviceTimezone || 'Not provided'}
 - Timezone Offset: ${timezoneInfo.timezoneOffset ? `${timezoneInfo.timezoneOffset} minutes from UTC` : 'Not provided'}
 
@@ -229,7 +230,7 @@ RESPONSE LENGTH RULES:
 - Keep responses as short as possible.
 - Only provide detailed responses when user asks explicitly for meeting details, schedules, or specific information.
 - If providing time/date, ensure it's human-friendly in the user's timezone (never in UTC or GMT, and never with technical time-zone notation).
-- Example concise responses: "Done", "What time?", "Who should attend?", "Meeting with John tomorrow 3pm?"
+- Example concise responses: "Done", "What time?", "Who should attend?"
 - Example detailed responses: Only when user asks "What meetings do I have today?" or "Show me my schedule"
 
 CONVERSATION MEMORY & DATA USE:
@@ -270,7 +271,7 @@ LIST MEETINGS:
 - "Do I have any meetings with John?" → list_calendar_events
 
 CRITICAL DATE PRECISION:
-- IMPORTANT: if you add  datetime/s in your response, you MUST add the timezone offset to the datetime/s and they must be human readable / customer presentable format.
+- IMPORTANT: Present all times in human-readable format in the user's local timezone (no UTC/GMT/timezone offsets shown to user).
 - When user asks for "today", query ONLY the current date (same date as shown in "Current datetime")
 - For "tomorrow" or similar, query the day after the current date - factor in the timezone offset
 - For "yesterday" or similar, query the day before the current date - factor in the timezone offset
@@ -312,8 +313,16 @@ ACCURATE DATA EXTRACTION:
 - If multiple events match a question, reference the specific event details from the tool response
 - Example: "The attendee was salman@futurewatch.com" (from tool response) not "john@example.com" (hallucinated)
 
+CRITICAL CONFIRMATION RESPONSE RULES:
+- When calling create_calendar_event, update_calendar_event, or delete_calendar_event tools, DO NOT include specific times/dates in your response
+- Instead, use generic confirmation phrases like:
+  - "Sure, I'll create this meeting. Could you confirm if these details look alright?"
+  - "I'll update that meeting for you. Does this look good?"
+  - "I'll cancel that meeting. Should I proceed?"
+- The user will see the full meeting details (time, date, attendees) in the confirmation UI, so you don't need to repeat them
+
 Examples of good responses:
-- "Create 'Meeting with John' tomorrow 3pm?" (after calling create_calendar_event tool)
+- "Sure, I'll create this meeting. Could you confirm if these details look alright?" (after calling create_calendar_event tool)
 - "What time?" (when missing time info)
 - "Done" (after successful action)
 - "You have 3 meetings tomorrow" (after calling list_calendar_events tool)
@@ -383,7 +392,6 @@ Context:\n${contextInfo}`;
     const response = await client.chat.completions.create({
       model: 'gpt-5-mini',
       messages: allMessages,
-      reasoning_effort: 'medium',
       tools,
       tool_choice: 'auto',
       service_tier:"priority"

@@ -11,6 +11,48 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 }
 });
 
+// Helper function to format time with user's timezone
+function formatTimeWithUserTimezone(dateString, req) {
+  const date = new Date(dateString);
+  const timezoneOffset = req.headers['x-device-timezone-offset'];
+  const deviceTimezone = req.headers['x-device-timezone'];
+  
+  if (timezoneOffset) {
+    const offsetMinutes = parseInt(timezoneOffset);
+    const userLocalTime = new Date(date.getTime() + offsetMinutes * 60000);
+    return userLocalTime.toLocaleString('en-US', {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+  }
+  
+  // Fallback to device timezone if available
+  if (deviceTimezone) {
+    try {
+      return date.toLocaleString('en-US', {
+        timeZone: deviceTimezone,
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    } catch (error) {
+      console.error('Invalid timezone:', deviceTimezone);
+    }
+  }
+  
+  // Final fallback
+  return date.toLocaleString();
+}
+
 // Execute calendar function based on GPT tool call
 async function executeTool(toolCall, accessToken) {
   const { name, arguments: args } = toolCall.function;
@@ -606,22 +648,27 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
             let confirmationMessage = '';
             switch (nextName) {
               case 'create_calendar_event':
-                confirmationMessage = `Create "${nextParams.summary}" on ${new Date(nextParams.startTime).toLocaleString()}?`;
+                const createTimeStr = formatTimeWithUserTimezone(nextParams.startTime, req);
+                confirmationMessage = `Create "${nextParams.summary}" on ${createTimeStr}?`;
                 break;
               case 'update_calendar_event':
                 if (actionPreview.eventDetails) {
-                  const startTime = new Date(actionPreview.eventDetails.start.dateTime || actionPreview.eventDetails.start.date);
-                  const timeStr = startTime.toLocaleString();
-                  confirmationMessage = `Update "${actionPreview.eventDetails.summary}" on ${timeStr}?`;
+                  const updateTimeStr = formatTimeWithUserTimezone(
+                    actionPreview.eventDetails.start.dateTime || actionPreview.eventDetails.start.date, 
+                    req
+                  );
+                  confirmationMessage = `Update "${actionPreview.eventDetails.summary}" on ${updateTimeStr}?`;
                 } else {
                   confirmationMessage = `Update event "${nextParams.summary || 'this event'}"?`;
                 }
                 break;
               case 'delete_calendar_event':
                 if (actionPreview.eventDetails) {
-                  const startTime = new Date(actionPreview.eventDetails.start.dateTime || actionPreview.eventDetails.start.date);
-                  const timeStr = startTime.toLocaleString();
-                  confirmationMessage = `Delete "${actionPreview.eventDetails.summary}" on ${timeStr}?`;
+                  const deleteTimeStr = formatTimeWithUserTimezone(
+                    actionPreview.eventDetails.start.dateTime || actionPreview.eventDetails.start.date, 
+                    req
+                  );
+                  confirmationMessage = `Delete "${actionPreview.eventDetails.summary}" on ${deleteTimeStr}?`;
                 } else {
                   confirmationMessage = `Delete "${nextParams.summary || 'this event'}"?`;
                 }
@@ -757,22 +804,27 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
         let confirmationMessage = '';
         switch (name) {
           case 'create_calendar_event':
-            confirmationMessage = `Create "${params.summary}" on ${new Date(params.startTime).toLocaleString()}?`;
+            const createTimeStr = formatTimeWithUserTimezone(params.startTime, req);
+            confirmationMessage = `Create "${params.summary}" on ${createTimeStr}?`;
             break;
           case 'update_calendar_event':
             if (actionPreview.eventDetails) {
-              const startTime = new Date(actionPreview.eventDetails.start.dateTime || actionPreview.eventDetails.start.date);
-              const timeStr = startTime.toLocaleString();
-              confirmationMessage = `Update "${actionPreview.eventDetails.summary}" on ${timeStr}?`;
+              const updateTimeStr = formatTimeWithUserTimezone(
+                actionPreview.eventDetails.start.dateTime || actionPreview.eventDetails.start.date, 
+                req
+              );
+              confirmationMessage = `Update "${actionPreview.eventDetails.summary}" on ${updateTimeStr}?`;
             } else {
               confirmationMessage = `Update event "${params.summary || 'this event'}"?`;
             }
             break;
         case 'delete_calendar_event':
           if (actionPreview.eventDetails) {
-            const startTime = new Date(actionPreview.eventDetails.start.dateTime || actionPreview.eventDetails.start.date);
-            const timeStr = startTime.toLocaleString();
-            confirmationMessage = `Delete "${actionPreview.eventDetails.summary}" on ${timeStr}?`;
+            const deleteTimeStr = formatTimeWithUserTimezone(
+              actionPreview.eventDetails.start.dateTime || actionPreview.eventDetails.start.date, 
+              req
+            );
+            confirmationMessage = `Delete "${actionPreview.eventDetails.summary}" on ${deleteTimeStr}?`;
           } else {
             confirmationMessage = `Delete "${params.summary || 'this event'}"?`;
           }
