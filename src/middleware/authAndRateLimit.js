@@ -109,7 +109,7 @@ const authAndRateLimit = async (req, res, next) => {
           
           const sseEvent = {
             type: 'response',
-            response: "You've reached your maximum usage for today! Checkin tomorrow, or consider upgrading to CalendAi Plus!",
+            response: "You've reached your maximum usage for today! Checkin tomorrow, or consider upgrading to Kalendra Plus!",
             usage: result.usage,
             limit: result.limit
           };
@@ -123,7 +123,7 @@ const authAndRateLimit = async (req, res, next) => {
         return res.status(200).json({
           success: false,
           type: 'response',
-          response: "You've reached your maximum usage for today! Checkin tomorrow, or consider upgrading to CalendAi Plus!",
+          response: "You've reached your maximum usage for today! Checkin tomorrow, or consider upgrading to Kalendra Plus!",
           error: 'Rate limit exceeded',
           usage: result.usage,
           limit: result.limit

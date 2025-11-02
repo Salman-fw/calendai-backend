@@ -125,7 +125,7 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
     if (req.file.size && req.file.size > MAX_AUDIO_BYTES) {
       return res.json({
         success: true,
-        response: "I'm sorry, I couldn't keep track of what you're saying. Could you summarize ? For longer commands, you can also consider upgrading to our CalendAI Plus plan !"
+        response: "I'm sorry, I couldn't keep track of what you're saying. Could you summarize ? For longer commands, you can also consider upgrading to our Kalendra Plus plan !"
       });
     }
 
@@ -449,7 +449,7 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
       if (req.file.size && req.file.size > MAX_AUDIO_BYTES) {
         res.write(`data: ${JSON.stringify({
           type: 'response',
-          response: "I'm sorry, I couldn't keep track of what you're saying. Could you summarize ? For longer commands, you can also consider upgrading to our CalendAI Plus plan !"
+          response: "I'm sorry, I couldn't keep track of what you're saying. Could you summarize ? For longer commands, you can also consider upgrading to our Kalendra Plus plan !"
         })}\n\n`);
         res.end();
         return;
