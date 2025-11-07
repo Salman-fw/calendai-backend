@@ -1,4 +1,4 @@
-import { db, admin } from '../config/firebase.js';
+import { db } from '../config/firebase.js';
 
 /**
  * Combined Authentication + Rate Limiting Middleware
@@ -50,9 +50,19 @@ const authAndRateLimit = async (req, res, next) => {
 
     console.log(`🔐 Authenticated user: ${userEmail} (UID: ${userId})`);
 
-    // Check rate limit in Firestore (using email as document ID)
+    // Skip rate limiting for onboarding endpoints
+    if (req.path.startsWith('/onboarding')) {
+      req.user = {
+        uid: userId,
+        email: userEmail
+      };
+      return next();
+    }
+
+    // Check rate limit in Firestore (using nested user doc structure)
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-    const userLimitRef = db.collection('user_limits').doc(userEmail);
+    const userDocRef = db.collection('users').doc(userEmail);
+    const userLimitRef = userDocRef.collection('configs').doc('limits');
 
     // Use a transaction to ensure atomic read + write
     try {
@@ -82,13 +92,15 @@ const authAndRateLimit = async (req, res, next) => {
         }
 
         // Increment usage counter
-        transaction.set(userLimitRef, {
+        transaction.set(userDocRef, {
           email: userEmail,
-          uid: userId,
+          uid: userId
+        }, { merge: true });
+
+        transaction.set(userLimitRef, {
           usage: usage + 1,
           limit: limit,
-          lastReset: lastReset,
-          lastAccess: admin.firestore.FieldValue.serverTimestamp()
+          lastReset: lastReset
         }, { merge: true });
 
         return { exceeded: false, usage: usage + 1, limit };

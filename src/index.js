@@ -4,6 +4,7 @@ import cors from 'cors';
 import transcribeRoutes from './routes/transcribeRoutes.js';
 import calendarRoutes from './routes/calendarRoutes.js';
 import voiceRoutes from './routes/voiceRoutes.js';
+import onboardingRoutes from './routes/onboardingRoutes.js';
 import { requestLogger, errorLogger } from './middleware/logger.js';
 import authAndRateLimit from './middleware/authAndRateLimit.js';
 
@@ -25,6 +26,7 @@ app.use('/api', authAndRateLimit);
 app.use('/api', transcribeRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/voice', voiceRoutes);
+app.use('/api/onboarding', onboardingRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
