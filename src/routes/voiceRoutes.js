@@ -54,7 +54,7 @@ function formatTimeWithUserTimezone(dateString, req) {
 }
 
 // Execute calendar function based on GPT tool call
-async function executeTool(toolCall, accessToken) {
+async function executeTool(toolCall, token, userEmail = null, calendarType = null, additionalToken = null) {
   const { name, arguments: args } = toolCall.function;
   const params = JSON.parse(args);
 
@@ -62,16 +62,16 @@ async function executeTool(toolCall, accessToken) {
 
   switch (name) {
     case 'list_calendar_events':
-      return await getEvents(accessToken, params);
+      return await getEvents(token, params, userEmail, calendarType, additionalToken);
 
     case 'create_calendar_event':
-      return await createEvent(accessToken, params);
+      return await createEvent(token, params, calendarType || 'google');
 
     case 'update_calendar_event':
-      return await updateEvent(accessToken, params.eventId, params);
+      return await updateEvent(token, params.eventId, params, calendarType || 'google');
 
     case 'delete_calendar_event':
-      return await deleteEvent(accessToken, params.eventId);
+      return await deleteEvent(token, params.eventId, calendarType || 'google');
 
     default:
       return { success: false, error: `Unknown tool: ${name}` };
@@ -152,16 +152,24 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
     let contextInfo = '';
     
     try {
+      const calendarType = req.query.type || null;
+      // Determine tokens based on calendar type:
+      // - 'google' or null: token is from Authorization header
+      // - 'outlook': token is from Authorization header
+      // - 'both': token is from Authorization header, additionalToken is from X-Additional-Token header
+      const additionalToken = (calendarType === 'both') ? (req.headers['x-additional-token'] || null) : null;
+      const primaryToken = req.token; // Always use token from Authorization header
+      
       const start = new Date();
       start.setDate(start.getDate() - 1); 
       start.setHours(0, 0, 0, 0);
       const end = new Date();
       end.setHours(23, 59, 59, 999);
       
-      const events = await getEvents(req.accessToken, {
+      const events = await getEvents(primaryToken, {
         timeMin: start.toISOString(),
         timeMax: end.toISOString()
-      });
+      }, req.user?.email, calendarType, additionalToken);
 
       if (events.success && events.events.length > 0) {
         const meetingsList = events.events
@@ -177,10 +185,10 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
       const twoMonthsAgo = new Date();
       twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
       
-      const recentEvents = await getEvents(req.accessToken, {
+      const recentEvents = await getEvents(primaryToken, {
         timeMin: twoMonthsAgo.toISOString(),
         maxResults: 50
-      });
+      }, req.user?.email, calendarType, additionalToken);
 
       if (recentEvents.success) {
         const contactMap = new Map(); // email -> {name, email}
@@ -243,7 +251,14 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
 
       // Check if this is a read-only action (execute immediately)
       if (name === 'list_calendar_events') {
-        const toolResult = await executeTool(toolCall, req.accessToken);
+        const calendarType = req.query.type || null;
+        // Determine tokens based on calendar type:
+        // - 'google' or null: token is from Authorization header
+        // - 'outlook': token is from Authorization header
+        // - 'both': token is from Authorization header, additionalToken is from X-Additional-Token header
+        const additionalToken = (calendarType === 'both') ? (req.headers['x-additional-token'] || null) : null;
+        const primaryToken = req.token; // Always use token from Authorization header
+        const toolResult = await executeTool(toolCall, primaryToken, req.user?.email, calendarType, additionalToken);
 
         conversationHistory.push({
           role: 'assistant',
@@ -342,7 +357,7 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
         // For delete and update events, fetch event details for confirmation
         if ((name === 'delete_calendar_event' || name === 'update_calendar_event') && params.eventId) {
           try {
-            const calendar = getCalendar(req.accessToken);
+            const calendar = getCalendar(req.token);
             const eventResponse = await calendar.events.get({
               calendarId: 'primary',
               eventId: params.eventId
@@ -477,16 +492,24 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
     let contextInfo = '';
     
     try {
+      const calendarType = req.query.type || null;
+      // Determine tokens based on calendar type:
+      // - 'google' or null: token is from Authorization header
+      // - 'outlook': token is from Authorization header
+      // - 'both': token is from Authorization header, additionalToken is from X-Additional-Token header
+      const additionalToken = (calendarType === 'both') ? (req.headers['x-additional-token'] || null) : null;
+      const primaryToken = req.token; // Always use token from Authorization header
+      
       // Fetch today's events
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
       const todayEnd = new Date();
       todayEnd.setHours(23, 59, 59, 999);
       
-      const todayEvents = await getEvents(req.accessToken, {
+      const todayEvents = await getEvents(primaryToken, {
         timeMin: todayStart.toISOString(),
         timeMax: todayEnd.toISOString()
-      });
+      }, req.user?.email, calendarType, additionalToken);
 
       if (todayEvents.success && todayEvents.events.length > 0) {
         const meetingsList = todayEvents.events
@@ -503,10 +526,10 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
       const twoMonthsAgo = new Date();
       twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
       
-      const recentEvents = await getEvents(req.accessToken, {
+      const recentEvents = await getEvents(primaryToken, {
         timeMin: twoMonthsAgo.toISOString(),
         maxResults: 50
-      });
+      }, req.user?.email, calendarType, additionalToken);
 
       if (recentEvents.success) {
         // Log the full context of past 2 months' meetings        
@@ -575,7 +598,14 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
 
       // Read-only action - execute and check if followed by mutating action
       if (name === 'list_calendar_events') {
-        const toolResult = await executeTool(toolCall, req.accessToken);
+        const calendarType = req.query.type || null;
+        // Determine tokens based on calendar type:
+        // - 'google' or null: token is from Authorization header
+        // - 'outlook': token is from Authorization header
+        // - 'both': token is from Authorization header, additionalToken is from X-Additional-Token header
+        const additionalToken = (calendarType === 'both') ? (req.headers['x-additional-token'] || null) : null;
+        const primaryToken = req.token; // Always use token from Authorization header
+        const toolResult = await executeTool(toolCall, primaryToken, req.user?.email, calendarType, additionalToken);
 
         conversationHistory.push({
           role: 'assistant',
@@ -626,7 +656,7 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
             // For delete and update events, fetch event details for confirmation
             if ((nextName === 'delete_calendar_event' || nextName === 'update_calendar_event') && nextParams.eventId) {
               try {
-                const calendar = getCalendar(req.accessToken);
+                const calendar = getCalendar(req.token);
                 const eventResponse = await calendar.events.get({
                   calendarId: 'primary',
                   eventId: nextParams.eventId
@@ -782,7 +812,7 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
         // For delete and update events, fetch event details for confirmation
         if ((name === 'delete_calendar_event' || name === 'update_calendar_event') && params.eventId) {
           try {
-            const calendar = getCalendar(req.accessToken);
+            const calendar = getCalendar(req.token);
             const eventResponse = await calendar.events.get({
               calendarId: 'primary',
               eventId: params.eventId
@@ -952,7 +982,7 @@ router.post('/execute', extractToken, async (req, res) => {
           endTime = new Date(start.getTime() + durationMinutes * 60 * 1000).toISOString();
         }
         
-        result = await createEvent(req.accessToken, {
+        result = await createEvent(req.token, {
           summary: action.summary,
           startTime: startTime,
           endTime: endTime,
@@ -988,7 +1018,7 @@ router.post('/execute', extractToken, async (req, res) => {
           }
         }
 
-        result = await updateEvent(req.accessToken, action.eventId, {
+        result = await updateEvent(req.token, action.eventId, {
           summary: action.summary,
           startTime: action.startTime,
           endTime: action.endTime,
@@ -998,7 +1028,7 @@ router.post('/execute', extractToken, async (req, res) => {
         break;
 
       case 'delete_calendar_event':
-        result = await deleteEvent(req.accessToken, action.eventId);
+        result = await deleteEvent(req.token, action.eventId);
         break;
     }
 
@@ -1083,7 +1113,7 @@ router.post('/widget', extractToken, upload.single('audio'), async (req, res) =>
           // For delete and update events, fetch event details for confirmation
           if ((name === 'delete_calendar_event' || name === 'update_calendar_event') && params.eventId) {
             try {
-              const calendar = getCalendar(req.accessToken);
+              const calendar = getCalendar(req.token);
               const eventResponse = await calendar.events.get({
                 calendarId: 'primary',
                 eventId: params.eventId
@@ -1112,7 +1142,14 @@ router.post('/widget', extractToken, upload.single('audio'), async (req, res) =>
         // If it's a read-only action, execute it and continue
         if (name === 'list_calendar_events') {
           try {
-            const toolResult = await executeTool(toolCall, req.accessToken);
+            const calendarType = req.query.type || null;
+            // Determine tokens based on calendar type:
+            // - 'google' or null: token is from Authorization header
+            // - 'outlook': token is from Authorization header
+            // - 'both': token is from Authorization header, additionalToken is from X-Additional-Token header
+            const additionalToken = (calendarType === 'both') ? (req.headers['x-additional-token'] || null) : null;
+            const primaryToken = req.token; // Always use token from Authorization header
+            const toolResult = await executeTool(toolCall, primaryToken, req.user?.email, calendarType, additionalToken);
             
             // Add assistant response and tool result to history
             conversationHistory.push({

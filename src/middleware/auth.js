@@ -1,4 +1,4 @@
-// Extract and validate Google OAuth access token from Authorization header
+// Extract and validate OAuth access token from Authorization header
 export function extractToken(req, res, next) {
   const authHeader = req.headers.authorization;
   
@@ -9,7 +9,7 @@ export function extractToken(req, res, next) {
     });
   }
   
-  req.accessToken = authHeader.substring(7);
+  req.token = authHeader.substring(7);
   next();
 }
 

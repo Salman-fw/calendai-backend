@@ -4,12 +4,13 @@ import { db } from '../config/firebase.js';
  * Combined Authentication + Rate Limiting Middleware
  * 
  * Flow:
- * 1. Extract Google OAuth token from Authorization header
- * 2. Verify token with Google's tokeninfo endpoint
+ * 1. Extract OAuth token from Authorization header
+ * 2. Verify token with Google's tokeninfo endpoint or Microsoft Graph API (based on calendar type)
  * 3. Get user's email from token
  * 4. Check rate limit in Firestore (by email)
  * 5. Increment usage counter atomically
  * 6. Attach user info to req.user
+ * 7. Set req.token for use in route handlers
  */
 const authAndRateLimit = async (req, res, next) => {
   try {
@@ -24,21 +25,47 @@ const authAndRateLimit = async (req, res, next) => {
 
     const token = authHeader.split('Bearer ')[1];
     
-    // Verify the Google OAuth token directly with Google
+    // Set req.token for use in route handlers
+    req.token = token;
+    
+    // Determine calendar type from query parameter
+    const calendarType = req.query.type || null;
+    
+    // Verify the OAuth token based on calendar type
     let userEmail, userId;
     try {
-      const response = await fetch(`https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${token}`);
-      
-      if (!response.ok) {
-        throw new Error('Invalid token');
-      }
-      
-      const tokenInfo = await response.json();
-      userEmail = tokenInfo.email;
-      userId = tokenInfo.user_id;
-      
-      if (!userEmail) {
-        throw new Error('Email not found in token');
+      if (calendarType === 'outlook') {
+        // Verify Outlook token with Microsoft Graph API
+        const response = await fetch('https://graph.microsoft.com/v1.0/me', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        if (!response.ok) {
+          throw new Error('Invalid Outlook token');
+        }
+        
+        const userInfo = await response.json();
+        userEmail = userInfo.mail || userInfo.userPrincipalName;
+        userId = userInfo.id;
+        
+        if (!userEmail) {
+          throw new Error('Email not found in Outlook token');
+        }
+      } else {
+        // Verify Google token with Google's tokeninfo endpoint
+        const response = await fetch(`https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${token}`);
+        
+        if (!response.ok) {
+          throw new Error('Invalid Google token');
+        }
+        
+        const tokenInfo = await response.json();
+        userEmail = tokenInfo.email;
+        userId = tokenInfo.user_id;
+        
+        if (!userEmail) {
+          throw new Error('Email not found in Google token');
+        }
       }
     } catch (error) {
       console.error('❌ Token verification failed:', error.message);

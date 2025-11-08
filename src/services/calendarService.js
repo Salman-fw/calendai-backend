@@ -1,172 +1,167 @@
-import { google } from 'googleapis';
+import * as googleCalendarService from './googleCalendarService.js';
+import * as outlookCalendarService from './outlookCalendarService.js';
+import { getOnboardingProfile } from './onboardingService.js';
 
-// Create calendar client with user's access token
-export function getCalendar(accessToken) {
-  const oauth2Client = new google.auth.OAuth2();
-  oauth2Client.setCredentials({ access_token: accessToken });
-  return google.calendar({ version: 'v3', auth: oauth2Client });
-}
+/**
+ * Router service that dispatches to appropriate calendar service based on type
+ * Calendar type: 'google' | 'outlook' | 'both' | null (defaults to 'google')
+ */
 
-// Create a calendar event
-export async function createEvent(accessToken, eventData) {
-  try {
-    const calendar = getCalendar(accessToken);
-    
-    const event = {
-      summary: eventData.summary,
-      description: eventData.description || '',
-      start: {
-        dateTime: eventData.startTime,
-        timeZone: eventData.timeZone || 'UTC',
-      },
-      end: {
-        dateTime: eventData.endTime,
-        timeZone: eventData.timeZone || 'UTC',
-      },
-      attendees: eventData.attendees || [],
-      conferenceData: {
-        createRequest: {
-          requestId: `meet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          conferenceSolutionKey: {
-            type: 'hangoutsMeet'
-          }
-        }
-      },
-      conferenceDataVersion: 1
-    };
-
-    const response = await calendar.events.insert({
-      calendarId: 'primary',
-      resource: event,
-      sendUpdates: 'all' // Send email notifications to all attendees
-    });
-
-    return {
-      success: true,
-      event: response.data
-    };
-  } catch (error) {
-    console.error('Create event error:', error);
-    return {
-      success: false,
-      error: error.message
-    };
+/**
+ * Determine calendar type from explicit parameter or user profile
+ * @param {string} [userEmail] - User email for profile lookup
+ * @param {string} [calendarType] - Explicit calendar type
+ * @returns {Promise<string>} Calendar type ('google', 'outlook', or 'both')
+ */
+async function getCalendarType(userEmail, calendarType) {
+  if (calendarType) return calendarType;
+  
+  // Fallback to onboarding profile if type not provided
+  if (userEmail) {
+    try {
+      const profile = await getOnboardingProfile(userEmail);
+      return profile?.calendars || 'google';
+    } catch (error) {
+      console.error('Error fetching onboarding profile:', error);
+      return 'google'; // Default on error
+    }
   }
+  
+  return 'google'; // Default
 }
 
-// Update a calendar event
-export async function updateEvent(accessToken, eventId, eventData) {
+/**
+ * Get calendar events from Google and/or Outlook calendars
+ * @param {string} token - OAuth access token (from Authorization header)
+ * @param {Object} filters - Filter options
+ * @param {string} [userEmail] - User email for profile lookup
+ * @param {string} [calendarType] - Explicit calendar type ('google', 'outlook', 'both')
+ * @param {string} [additionalToken] - Additional token for 'both' type (from X-Additional-Token header)
+ * @returns {Promise<{success: boolean, events?: Array, error?: string}>}
+ */
+export async function getEvents(token, filters = {}, userEmail = null, calendarType = null, additionalToken = null) {
   try {
-    const calendar = getCalendar(accessToken);
-    
-    // First, fetch the existing event to preserve data
-    const existingEventResponse = await calendar.events.get({
-      calendarId: 'primary',
-      eventId: eventId
-    });
-    
-    const existingEvent = existingEventResponse.data;
-    
-    // Merge new data with existing data (only update specified fields)
-    const updatedEvent = {
-      summary: eventData.summary || existingEvent.summary,
-      description: eventData.description !== undefined ? eventData.description : existingEvent.description,
-      start: eventData.startTime ? {
-        dateTime: eventData.startTime,
-        timeZone: eventData.timeZone || existingEvent.start.timeZone || 'UTC',
-      } : existingEvent.start,
-      end: eventData.endTime ? {
-        dateTime: eventData.endTime,
-        timeZone: eventData.timeZone || existingEvent.end.timeZone || 'UTC',
-      } : existingEvent.end,
-      attendees: eventData.attendees || existingEvent.attendees,
-    };
-
-    // Ensure Google Meet link exists (preserve existing or create new)
-    if (existingEvent.conferenceData && existingEvent.conferenceData.entryPoints) {
-      // Preserve existing Meet link
-      updatedEvent.conferenceData = existingEvent.conferenceData;
-    } else {
-      // Create new Meet link if none exists
-      updatedEvent.conferenceData = {
-        createRequest: {
-          requestId: `meet-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          conferenceSolutionKey: {
-            type: 'hangoutsMeet'
-          }
-        }
-      };
-      updatedEvent.conferenceDataVersion = 1;
+    if (!token) {
+      return { success: false, error: 'Access token is required' };
     }
 
-    const response = await calendar.events.update({
-      calendarId: 'primary',
-      eventId: eventId,
-      resource: updatedEvent,
-      sendUpdates: 'all' // Send email notifications to all attendees
+    const type = await getCalendarType(userEmail, calendarType);
+    const allEvents = [];
+
+    // Determine which tokens to use based on calendar type:
+    // - 'google' or null: use token for Google Calendar
+    // - 'outlook': use token for Outlook Calendar
+    // - 'both': use token for Google Calendar, additionalToken for Outlook Calendar
+    const tokenForGoogle = (type === 'google' || type === 'both' || !type) ? token : null;
+    const tokenForOutlook = (type === 'outlook') ? token : (type === 'both' ? additionalToken : null);
+
+    // Fetch from Google Calendar
+    if (type === 'google' || type === 'both') {
+      if (!tokenForGoogle) {
+        console.warn('Google calendar type requested but no token provided');
+      } else {
+        try {
+          const result = await googleCalendarService.getEvents(tokenForGoogle, filters);
+          if (result.success && result.events) {
+            allEvents.push(...result.events);
+          }
+        } catch (error) {
+          console.error('Google Calendar fetch error:', error);
+          // Continue with other calendars even if one fails
+        }
+      }
+    }
+
+    // Fetch from Outlook Calendar
+    if (type === 'outlook' || type === 'both') {
+      if (!tokenForOutlook) {
+        console.warn('Outlook calendar type requested but no token provided');
+      } else {
+        try {
+          const result = await outlookCalendarService.getEvents(tokenForOutlook, filters);
+          if (result.success && result.events) {
+            allEvents.push(...result.events);
+          }
+        } catch (error) {
+          console.error('Outlook Calendar fetch error:', error);
+          // Continue with other calendars even if one fails
+        }
+      }
+    }
+
+    // Sort all events by start time
+    allEvents.sort((a, b) => {
+      const aStart = new Date(a.start?.dateTime || a.start?.date || 0);
+      const bStart = new Date(b.start?.dateTime || b.start?.date || 0);
+      return aStart - bStart;
     });
+
+    // Limit results if needed
+    const limitedEvents = filters.maxResults 
+      ? allEvents.slice(0, filters.maxResults)
+      : allEvents;
 
     return {
       success: true,
-      event: response.data
-    };
-  } catch (error) {
-    console.error('Update event error:', error);
-    return {
-      success: false,
-      error: error.message
-    };
-  }
-}
-
-// Get calendar events with optional filters
-export async function getEvents(accessToken, filters = {}) {
-  try {
-    const calendar = getCalendar(accessToken);
-    
-    const response = await calendar.events.list({
-      calendarId: 'primary',
-      timeMin: filters.timeMin || new Date().toISOString(),
-      timeMax: filters.timeMax,
-      maxResults: filters.maxResults || 100,
-      singleEvents: true,
-      orderBy: 'startTime',
-      q: filters.q,
-    });
-
-    return {
-      success: true,
-      events: response.data.items || []
+      events: limitedEvents
     };
   } catch (error) {
     console.error('Get events error:', error);
     return {
       success: false,
-      error: error.message
+      error: error.message || 'Failed to fetch calendar events'
     };
   }
 }
 
-// Delete a calendar event
-export async function deleteEvent(accessToken, eventId) {
-  try {
-    const calendar = getCalendar(accessToken);
-    
-    await calendar.events.delete({
-      calendarId: 'primary',
-      eventId: eventId,
-    });
-
-    return {
-      success: true,
-      message: 'Event deleted successfully'
-    };
-  } catch (error) {
-    console.error('Delete event error:', error);
-    return {
-      success: false,
-      error: error.message
-    };
+/**
+ * Create calendar event - routes to appropriate service
+ * @param {string} token - OAuth access token
+ * @param {Object} eventData - Event data
+ * @param {string} [calendarType='google'] - Calendar type ('google' or 'outlook')
+ * @returns {Promise<{success: boolean, event?: Object, error?: string}>}
+ */
+export async function createEvent(token, eventData, calendarType = 'google') {
+  if (calendarType === 'outlook') {
+    return { success: false, error: 'Outlook create not yet implemented' };
   }
+  return await googleCalendarService.createEvent(token, eventData);
 }
 
+/**
+ * Update calendar event - routes to appropriate service
+ * @param {string} token - OAuth access token
+ * @param {string} eventId - Event ID to update
+ * @param {Object} eventData - Updated event data
+ * @param {string} [calendarType='google'] - Calendar type ('google' or 'outlook')
+ * @returns {Promise<{success: boolean, event?: Object, error?: string}>}
+ */
+export async function updateEvent(token, eventId, eventData, calendarType = 'google') {
+  if (calendarType === 'outlook') {
+    return { success: false, error: 'Outlook update not yet implemented' };
+  }
+  return await googleCalendarService.updateEvent(token, eventId, eventData);
+}
+
+/**
+ * Delete calendar event - routes to appropriate service
+ * @param {string} token - OAuth access token
+ * @param {string} eventId - Event ID to delete
+ * @param {string} [calendarType='google'] - Calendar type ('google' or 'outlook')
+ * @returns {Promise<{success: boolean, message?: string, error?: string}>}
+ */
+export async function deleteEvent(token, eventId, calendarType = 'google') {
+  if (calendarType === 'outlook') {
+    return { success: false, error: 'Outlook delete not yet implemented' };
+  }
+  return await googleCalendarService.deleteEvent(token, eventId);
+}
+
+/**
+ * Get Google Calendar client - exported for backward compatibility
+ * @param {string} token - OAuth access token
+ * @returns {google.calendar_v3.Calendar} Calendar API client
+ */
+export function getCalendar(token) {
+  return googleCalendarService.getCalendar(token);
+}
