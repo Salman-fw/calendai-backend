@@ -3,7 +3,7 @@ import multer from 'multer';
 import { transcribeAudio } from '../services/whisperService.js';
 import { processWithLLM } from '../services/llmService.js';
 import { getEvents, createEvent, updateEvent, deleteEvent, getCalendar } from '../services/calendarService.js';
-import { extractToken } from '../middleware/auth.js';
+// Note: authAndRateLimit middleware is applied at app level (/api), so extractToken is not needed
 
 const router = express.Router();
 const upload = multer({ 
@@ -104,7 +104,8 @@ router.post('/test', upload.single('audio'), async (req, res) => {
 });
 
 // POST /api/voice/command - Process voice or text command
-router.post('/command', extractToken, upload.single('audio'), async (req, res) => {
+// Note: authAndRateLimit middleware (applied at /api level) already extracts token and sets req.token
+router.post('/command', upload.single('audio'), async (req, res) => {
   try {
     let userMessage;
     let conversationHistory = [];
@@ -435,7 +436,8 @@ router.post('/command', extractToken, upload.single('audio'), async (req, res) =
 });
 
 // POST /api/voice/stream - Process voice command with SSE (progressive updates)
-router.post('/stream', extractToken, upload.single('audio'), async (req, res) => {
+// Note: authAndRateLimit middleware (applied at /api level) already extracts token and sets req.token
+router.post('/stream', upload.single('audio'), async (req, res) => {
   try {
     // Set SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
@@ -653,27 +655,62 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
               ...nextParams
             };
 
-            // For delete and update events, fetch event details for confirmation
-            if ((nextName === 'delete_calendar_event' || nextName === 'update_calendar_event') && nextParams.eventId) {
-              try {
-                const calendar = getCalendar(req.token);
-                const eventResponse = await calendar.events.get({
-                  calendarId: 'primary',
-                  eventId: nextParams.eventId
-                });
-                
-                const event = eventResponse.data;
+        // For delete and update events, fetch event details for confirmation
+        if ((nextName === 'delete_calendar_event' || nextName === 'update_calendar_event') && nextParams.eventId) {
+          try {
+            const calendarType = req.query.type || 'google';
+            
+            if (calendarType === 'outlook') {
+              // Fetch event from Outlook using Microsoft Graph API
+              const response = await fetch(`https://graph.microsoft.com/v1.0/me/calendar/events/${nextParams.eventId}`, {
+                headers: {
+                  'Authorization': `Bearer ${req.token}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+              
+              if (response.ok) {
+                const graphEvent = await response.json();
                 actionPreview.eventDetails = {
-                  summary: event.summary,
-                  description: event.description,
-                  start: event.start,
-                  end: event.end,
-                  attendees: event.attendees
+                  summary: graphEvent.subject || '',
+                  description: graphEvent.body?.content || '',
+                  start: {
+                    dateTime: graphEvent.start?.dateTime,
+                    date: graphEvent.start?.date,
+                    timeZone: graphEvent.start?.timeZone || 'UTC'
+                  },
+                  end: {
+                    dateTime: graphEvent.end?.dateTime,
+                    date: graphEvent.end?.date,
+                    timeZone: graphEvent.end?.timeZone || 'UTC'
+                  },
+                  attendees: (graphEvent.attendees || []).map(a => ({
+                    email: a.emailAddress?.address,
+                    displayName: a.emailAddress?.name
+                  }))
                 };
-              } catch (error) {
-                console.error(`Failed to fetch event details for ${nextName}:`, error);
               }
+            } else {
+              // Fetch event from Google Calendar
+              const calendar = getCalendar(req.token);
+              const eventResponse = await calendar.events.get({
+                calendarId: 'primary',
+                eventId: nextParams.eventId
+              });
+              
+              const event = eventResponse.data;
+              actionPreview.eventDetails = {
+                summary: event.summary,
+                description: event.description,
+                start: event.start,
+                end: event.end,
+                attendees: event.attendees
+              };
             }
+          } catch (error) {
+            console.error(`Failed to fetch event details for ${nextName}:`, error);
+          }
+        }
 
             let confirmationMessage = '';
             switch (nextName) {
@@ -812,20 +849,55 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
         // For delete and update events, fetch event details for confirmation
         if ((name === 'delete_calendar_event' || name === 'update_calendar_event') && params.eventId) {
           try {
-            const calendar = getCalendar(req.token);
-            const eventResponse = await calendar.events.get({
-              calendarId: 'primary',
-              eventId: params.eventId
-            });
+            const calendarType = req.query.type || 'google';
             
-            const event = eventResponse.data;
-            actionPreview.eventDetails = {
-              summary: event.summary,
-              description: event.description,
-              start: event.start,
-              end: event.end,
-              attendees: event.attendees
-            };
+            if (calendarType === 'outlook') {
+              // Fetch event from Outlook using Microsoft Graph API
+              const response = await fetch(`https://graph.microsoft.com/v1.0/me/calendar/events/${params.eventId}`, {
+                headers: {
+                  'Authorization': `Bearer ${req.token}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+              
+              if (response.ok) {
+                const graphEvent = await response.json();
+                actionPreview.eventDetails = {
+                  summary: graphEvent.subject || '',
+                  description: graphEvent.body?.content || '',
+                  start: {
+                    dateTime: graphEvent.start?.dateTime,
+                    date: graphEvent.start?.date,
+                    timeZone: graphEvent.start?.timeZone || 'UTC'
+                  },
+                  end: {
+                    dateTime: graphEvent.end?.dateTime,
+                    date: graphEvent.end?.date,
+                    timeZone: graphEvent.end?.timeZone || 'UTC'
+                  },
+                  attendees: (graphEvent.attendees || []).map(a => ({
+                    email: a.emailAddress?.address,
+                    displayName: a.emailAddress?.name
+                  }))
+                };
+              }
+            } else {
+              // Fetch event from Google Calendar
+              const calendar = getCalendar(req.token);
+              const eventResponse = await calendar.events.get({
+                calendarId: 'primary',
+                eventId: params.eventId
+              });
+              
+              const event = eventResponse.data;
+              actionPreview.eventDetails = {
+                summary: event.summary,
+                description: event.description,
+                start: event.start,
+                end: event.end,
+                attendees: event.attendees
+              };
+            }
           } catch (error) {
             console.error(`Failed to fetch event details for ${name}:`, error);
           }
@@ -903,7 +975,8 @@ router.post('/stream', extractToken, upload.single('audio'), async (req, res) =>
 });
 
 // POST /api/voice/execute - Execute a confirmed action
-router.post('/execute', extractToken, async (req, res) => {
+// Note: authAndRateLimit middleware (applied at /api level) already extracts token and sets req.token
+router.post('/execute', async (req, res) => {
   try {
     const { action, confirmed } = req.body;
 
@@ -939,6 +1012,9 @@ router.post('/execute', extractToken, async (req, res) => {
         error: 'Invalid action type'
       });
     }
+
+    // Get calendar type from query parameter (set by authAndRateLimit middleware)
+    const calendarType = req.query.type || 'google';
 
     // Execute the action
     let result;
@@ -988,7 +1064,7 @@ router.post('/execute', extractToken, async (req, res) => {
           endTime: endTime,
           description: action.description,
           attendees: action.attendees
-        });
+        }, calendarType);
         break;
 
       case 'update_calendar_event':
@@ -1024,11 +1100,11 @@ router.post('/execute', extractToken, async (req, res) => {
           endTime: action.endTime,
           description: action.description,
           attendees: action.attendees
-        });
+        }, calendarType);
         break;
 
       case 'delete_calendar_event':
-        result = await deleteEvent(req.token, action.eventId);
+        result = await deleteEvent(req.token, action.eventId, calendarType);
         break;
     }
 
@@ -1056,7 +1132,8 @@ router.post('/execute', extractToken, async (req, res) => {
 });
 
 // POST /api/voice/check - Check if action needs confirmation (non-SSE)
-router.post('/widget', extractToken, upload.single('audio'), async (req, res) => {
+// Note: authAndRateLimit middleware (applied at /api level) already extracts token and sets req.token
+router.post('/widget', upload.single('audio'), async (req, res) => {
   console.log('🔍 DEBUG - Widget API REQUEST:');
   try {
     let userMessage;

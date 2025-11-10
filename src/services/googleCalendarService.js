@@ -198,7 +198,7 @@ export async function getEvents(token, filters = {}) {
  * Delete a Google Calendar event
  * @param {string} token - OAuth access token
  * @param {string} eventId - Event ID to delete
- * @returns {Promise<{success: boolean, message?: string, error?: string}>}
+ * @returns {Promise<{success: boolean, event?: Object, message?: string, error?: string}>}
  */
 export async function deleteEvent(token, eventId) {
   try {
@@ -211,6 +211,19 @@ export async function deleteEvent(token, eventId) {
 
     const calendar = getCalendar(token);
     
+    // Fetch event details before deleting
+    let eventDetails = null;
+    try {
+      const eventResponse = await calendar.events.get({
+        calendarId: 'primary',
+        eventId: eventId
+      });
+      eventDetails = eventResponse.data;
+    } catch (error) {
+      console.warn('Could not fetch event details before deletion:', error.message);
+      // Continue with deletion even if fetch fails
+    }
+    
     await calendar.events.delete({
       calendarId: 'primary',
       eventId: eventId,
@@ -218,6 +231,7 @@ export async function deleteEvent(token, eventId) {
 
     return {
       success: true,
+      event: eventDetails, // Return event details that were deleted
       message: 'Event deleted successfully'
     };
   } catch (error) {

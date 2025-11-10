@@ -123,7 +123,7 @@ export async function getEvents(token, filters = {}, userEmail = null, calendarT
  */
 export async function createEvent(token, eventData, calendarType = 'google') {
   if (calendarType === 'outlook') {
-    return { success: false, error: 'Outlook create not yet implemented' };
+    return await outlookCalendarService.createEvent(token, eventData);
   }
   return await googleCalendarService.createEvent(token, eventData);
 }
@@ -138,7 +138,7 @@ export async function createEvent(token, eventData, calendarType = 'google') {
  */
 export async function updateEvent(token, eventId, eventData, calendarType = 'google') {
   if (calendarType === 'outlook') {
-    return { success: false, error: 'Outlook update not yet implemented' };
+    return await outlookCalendarService.updateEvent(token, eventId, eventData);
   }
   return await googleCalendarService.updateEvent(token, eventId, eventData);
 }
@@ -152,7 +152,7 @@ export async function updateEvent(token, eventId, eventData, calendarType = 'goo
  */
 export async function deleteEvent(token, eventId, calendarType = 'google') {
   if (calendarType === 'outlook') {
-    return { success: false, error: 'Outlook delete not yet implemented' };
+    return await outlookCalendarService.deleteEvent(token, eventId);
   }
   return await googleCalendarService.deleteEvent(token, eventId);
 }
