@@ -86,6 +86,16 @@ const authAndRateLimit = async (req, res, next) => {
       return next();
     }
 
+    // Skip rate limiting for calendar event fetching (read-only browsing, not LLM processing)
+    // Match exact path /calendar/events or /calendar/events with query params
+    if (req.path === '/calendar/events' && req.method === 'GET') {
+      req.user = {
+        uid: userId,
+        email: userEmail
+      };
+      return next();
+    }
+
     // Check rate limit in Firestore (using nested user doc structure)
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
     const userDocRef = db.collection('users').doc(userEmail);

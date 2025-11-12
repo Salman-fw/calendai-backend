@@ -55,36 +55,83 @@ export async function getEvents(token, filters = {}, userEmail = null, calendarT
     const tokenForGoogle = (type === 'google' || type === 'both' || !type) ? token : null;
     const tokenForOutlook = (type === 'outlook') ? token : (type === 'both' ? additionalToken : null);
 
-    // Fetch from Google Calendar
-    if (type === 'google' || type === 'both') {
-      if (!tokenForGoogle) {
-        console.warn('Google calendar type requested but no token provided');
-      } else {
-        try {
-          const result = await googleCalendarService.getEvents(tokenForGoogle, filters);
-          if (result.success && result.events) {
-            allEvents.push(...result.events);
+    // Fetch events - use parallel fetching when type is 'both' for better performance
+    if (type === 'both') {
+      // Fetch from both calendars in parallel
+      const [googleResult, outlookResult] = await Promise.all([
+        tokenForGoogle
+          ? googleCalendarService.getEvents(tokenForGoogle, filters).catch(err => {
+              console.error('Google Calendar fetch error:', err);
+              return { success: false, events: [] };
+            })
+          : Promise.resolve({ success: false, events: [] }),
+        tokenForOutlook
+          ? outlookCalendarService.getEvents(tokenForOutlook, filters).catch(err => {
+              console.error('Outlook Calendar fetch error:', err);
+              return { success: false, events: [] };
+            })
+          : Promise.resolve({ success: false, events: [] })
+      ]);
+
+      if (googleResult.success && googleResult.events) {
+        // Mark Google events with source
+        const googleEvents = googleResult.events.map(event => ({
+          ...event,
+          source: 'google'
+        }));
+        allEvents.push(...googleEvents);
+      }
+      if (outlookResult.success && outlookResult.events) {
+        // Mark Outlook events with source
+        const outlookEvents = outlookResult.events.map(event => ({
+          ...event,
+          source: 'outlook'
+        }));
+        allEvents.push(...outlookEvents);
+      }
+    } else {
+      // Single calendar - fetch sequentially (no performance benefit from parallel)
+      // Fetch from Google Calendar
+      if (type === 'google' || !type) {
+        if (!tokenForGoogle) {
+          console.warn('Google calendar type requested but no token provided');
+        } else {
+          try {
+            const result = await googleCalendarService.getEvents(tokenForGoogle, filters);
+            if (result.success && result.events) {
+              // Mark Google events with source
+              const googleEvents = result.events.map(event => ({
+                ...event,
+                source: 'google'
+              }));
+              allEvents.push(...googleEvents);
+            }
+          } catch (error) {
+            console.error('Google Calendar fetch error:', error);
+            // Continue even if fetch fails
           }
-        } catch (error) {
-          console.error('Google Calendar fetch error:', error);
-          // Continue with other calendars even if one fails
         }
       }
-    }
 
-    // Fetch from Outlook Calendar
-    if (type === 'outlook' || type === 'both') {
-      if (!tokenForOutlook) {
-        console.warn('Outlook calendar type requested but no token provided');
-      } else {
-        try {
-          const result = await outlookCalendarService.getEvents(tokenForOutlook, filters);
-          if (result.success && result.events) {
-            allEvents.push(...result.events);
+      // Fetch from Outlook Calendar
+      if (type === 'outlook') {
+        if (!tokenForOutlook) {
+          console.warn('Outlook calendar type requested but no token provided');
+        } else {
+          try {
+            const result = await outlookCalendarService.getEvents(tokenForOutlook, filters);
+            if (result.success && result.events) {
+              // Mark Outlook events with source
+              const outlookEvents = result.events.map(event => ({
+                ...event,
+                source: 'outlook'
+              }));
+              allEvents.push(...outlookEvents);
+            }
+          } catch (error) {
+            console.error('Outlook Calendar fetch error:', error);
+            // Continue even if fetch fails
           }
-        } catch (error) {
-          console.error('Outlook Calendar fetch error:', error);
-          // Continue with other calendars even if one fails
         }
       }
     }

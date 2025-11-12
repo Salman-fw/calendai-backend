@@ -17,9 +17,48 @@ router.get('/events', async (req, res) => {
     const additionalToken = (calendarType === 'both') ? (req.headers['x-additional-token'] || null) : null;
     const primaryToken = req.token; // Always use token from Authorization header
 
+    // Normalize dates to ensure they have timezone info (RFC3339 format required by Google Calendar API)
+    // If dates are missing timezone, assume they're in UTC and append 'Z'
+    let normalizedTimeMin = timeMin;
+    let normalizedTimeMax = timeMax;
+    
+    if (timeMin) {
+      // Check if date already has timezone: ends with Z, or has offset like +05:00, -08:00, +0500
+      const hasTimezone = timeMin.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(timeMin);
+      if (!hasTimezone) {
+        try {
+          // Parse as UTC and convert to ISO string (assumes input is UTC if no timezone specified)
+          const date = new Date(timeMin + (timeMin.includes('T') ? 'Z' : ''));
+          if (!isNaN(date.getTime())) {
+            normalizedTimeMin = date.toISOString();
+          }
+        } catch (e) {
+          console.warn('Failed to normalize timeMin:', timeMin, e.message);
+          // Keep original if parsing fails - let the API handle the error
+        }
+      }
+    }
+    
+    if (timeMax) {
+      // Check if date already has timezone: ends with Z, or has offset like +05:00, -08:00, +0500
+      const hasTimezone = timeMax.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(timeMax);
+      if (!hasTimezone) {
+        try {
+          // Parse as UTC and convert to ISO string (assumes input is UTC if no timezone specified)
+          const date = new Date(timeMax + (timeMax.includes('T') ? 'Z' : ''));
+          if (!isNaN(date.getTime())) {
+            normalizedTimeMax = date.toISOString();
+          }
+        } catch (e) {
+          console.warn('Failed to normalize timeMax:', timeMax, e.message);
+          // Keep original if parsing fails - let the API handle the error
+        }
+      }
+    }
+
     const result = await getEvents(primaryToken, {
-      timeMin,
-      timeMax,
+      timeMin: normalizedTimeMin,
+      timeMax: normalizedTimeMax,
       maxResults: maxResults ? parseInt(maxResults, 10) : undefined,
       q
     }, req.user?.email, calendarType, additionalToken);
