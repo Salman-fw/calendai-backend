@@ -1,5 +1,7 @@
 import * as googleCalendarService from './googleCalendarService.js';
 import * as outlookCalendarService from './outlookCalendarService.js';
+import * as googleTasksService from './googleTasksService.js';
+import * as outlookTasksService from './outlookTasksService.js';
 import { getOnboardingProfile } from './onboardingService.js';
 
 /**
@@ -21,7 +23,7 @@ async function getCalendarType(userEmail, calendarType) {
     try {
       const profile = await getOnboardingProfile(userEmail);
       return profile?.calendars || 'google';
-    } catch (error) {
+  } catch (error) {
       console.error('Error fetching onboarding profile:', error);
       return 'google'; // Default on error
     }
@@ -57,8 +59,8 @@ export async function getEvents(token, filters = {}, userEmail = null, calendarT
 
     // Fetch events - use parallel fetching when type is 'both' for better performance
     if (type === 'both') {
-      // Fetch from both calendars in parallel
-      const [googleResult, outlookResult] = await Promise.all([
+      // Fetch from both calendars and tasks in parallel
+      const [googleResult, outlookResult, googleTasksResult, outlookTasksResult] = await Promise.all([
         tokenForGoogle
           ? googleCalendarService.getEvents(tokenForGoogle, filters).catch(err => {
               console.error('Google Calendar fetch error:', err);
@@ -70,14 +72,27 @@ export async function getEvents(token, filters = {}, userEmail = null, calendarT
               console.error('Outlook Calendar fetch error:', err);
               return { success: false, events: [] };
             })
-          : Promise.resolve({ success: false, events: [] })
+          : Promise.resolve({ success: false, events: [] }),
+        tokenForGoogle
+          ? googleTasksService.getTasks(tokenForGoogle, filters).catch(err => {
+              console.warn('Google Tasks fetch error:', err.message);
+              return { success: false, tasks: [] };
+            })
+          : Promise.resolve({ success: false, tasks: [] }),
+        tokenForOutlook
+          ? outlookTasksService.getTasks(tokenForOutlook, filters).catch(err => {
+              console.warn('Outlook Tasks fetch error:', err.message);
+              return { success: false, tasks: [] };
+            })
+          : Promise.resolve({ success: false, tasks: [] })
       ]);
 
       if (googleResult.success && googleResult.events) {
         // Mark Google events with source
         const googleEvents = googleResult.events.map(event => ({
           ...event,
-          source: 'google'
+          source: 'google',
+          isTask: false
         }));
         allEvents.push(...googleEvents);
       }
@@ -89,6 +104,26 @@ export async function getEvents(token, filters = {}, userEmail = null, calendarT
         }));
         allEvents.push(...outlookEvents);
       }
+      if (googleTasksResult.success && googleTasksResult.tasks) {
+        // Mark Google tasks with source
+        const tasks = googleTasksResult.tasks.map(task => ({
+          ...task,
+          source: 'google',
+          isTask: true
+        }));
+        console.log(`[CalendarService] Adding ${tasks.length} Google tasks with isTask flag`);
+        allEvents.push(...tasks);
+      }
+      if (outlookTasksResult.success && outlookTasksResult.tasks) {
+        // Mark Outlook tasks with source
+        const tasks = outlookTasksResult.tasks.map(task => ({
+          ...task,
+          source: 'outlook',
+          isTask: true
+        }));
+        console.log(`[CalendarService] Adding ${tasks.length} Outlook tasks with isTask flag`);
+        allEvents.push(...tasks);
+      }
     } else {
       // Single calendar - fetch sequentially (no performance benefit from parallel)
       // Fetch from Google Calendar
@@ -97,17 +132,39 @@ export async function getEvents(token, filters = {}, userEmail = null, calendarT
           console.warn('Google calendar type requested but no token provided');
         } else {
           try {
-            const result = await googleCalendarService.getEvents(tokenForGoogle, filters);
-            if (result.success && result.events) {
+            // Fetch events and tasks in parallel
+            const [eventsResult, tasksResult] = await Promise.all([
+              googleCalendarService.getEvents(tokenForGoogle, filters).catch(err => {
+                console.error('Google Calendar fetch error:', err);
+                return { success: false, events: [] };
+              }),
+              googleTasksService.getTasks(tokenForGoogle, filters).catch(err => {
+                console.warn('Google Tasks fetch error:', err.message);
+                return { success: false, tasks: [] };
+              })
+            ]);
+
+            if (eventsResult.success && eventsResult.events) {
               // Mark Google events with source
-              const googleEvents = result.events.map(event => ({
+              const googleEvents = eventsResult.events.map(event => ({
                 ...event,
-                source: 'google'
+                source: 'google',
+                isTask: false
               }));
               allEvents.push(...googleEvents);
             }
+            if (tasksResult.success && tasksResult.tasks) {
+              // Mark tasks with source
+              const tasks = tasksResult.tasks.map(task => ({
+                ...task,
+                source: 'google',
+                isTask: true
+              }));
+              console.log(`[CalendarService] Adding ${tasks.length} tasks with isTask flag`);
+              allEvents.push(...tasks);
+            }
           } catch (error) {
-            console.error('Google Calendar fetch error:', error);
+            console.error('Google Calendar/Tasks fetch error:', error);
             // Continue even if fetch fails
           }
         }
@@ -119,17 +176,38 @@ export async function getEvents(token, filters = {}, userEmail = null, calendarT
           console.warn('Outlook calendar type requested but no token provided');
         } else {
           try {
-            const result = await outlookCalendarService.getEvents(tokenForOutlook, filters);
-            if (result.success && result.events) {
+            // Fetch events and tasks in parallel
+            const [eventsResult, tasksResult] = await Promise.all([
+              outlookCalendarService.getEvents(tokenForOutlook, filters).catch(err => {
+                console.error('Outlook Calendar fetch error:', err);
+                return { success: false, events: [] };
+              }),
+              outlookTasksService.getTasks(tokenForOutlook, filters).catch(err => {
+                console.warn('Outlook Tasks fetch error:', err.message);
+                return { success: false, tasks: [] };
+              })
+            ]);
+
+            if (eventsResult.success && eventsResult.events) {
               // Mark Outlook events with source
-              const outlookEvents = result.events.map(event => ({
+              const outlookEvents = eventsResult.events.map(event => ({
                 ...event,
                 source: 'outlook'
               }));
               allEvents.push(...outlookEvents);
             }
-          } catch (error) {
-            console.error('Outlook Calendar fetch error:', error);
+            if (tasksResult.success && tasksResult.tasks) {
+              // Mark Outlook tasks with source
+              const tasks = tasksResult.tasks.map(task => ({
+                ...task,
+                source: 'outlook',
+                isTask: true
+              }));
+              console.log(`[CalendarService] Adding ${tasks.length} Outlook tasks with isTask flag`);
+              allEvents.push(...tasks);
+            }
+  } catch (error) {
+            console.error('Outlook Calendar/Tasks fetch error:', error);
             // Continue even if fetch fails
           }
         }
