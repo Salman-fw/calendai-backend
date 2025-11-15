@@ -46,6 +46,30 @@ const tools = [
   {
     type: 'function',
     function: {
+      name: 'list_tasks',
+      description: 'Get tasks from the user\'s task list for a specified time range',
+      parameters: {
+        type: 'object',
+        properties: {
+          timeMin: {
+            type: 'string',
+            description: 'Minimum due date in ISO 8601 format (e.g., 2025-10-15T00:00:00Z). Tasks without due dates are also included'
+          },
+          timeMax: {
+            type: 'string',
+            description: 'Maximum due date in ISO 8601 format'
+          },
+          maxResults: {
+            type: 'number',
+            description: 'Maximum number of tasks to return (default: 100)'
+          }
+        }
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
       name: 'create_calendar_event',
       description: 'Create a new calendar event',
       parameters: {
@@ -146,6 +170,77 @@ const tools = [
         required: ['eventId']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_task',
+      description: 'Create a new task in the user\'s task list',
+      parameters: {
+        type: 'object',
+        properties: {
+          title: {
+            type: 'string',
+            description: 'Task title/name (required)'
+          },
+          notes: {
+            type: 'string',
+            description: 'Task notes/description (optional)'
+          },
+          due: {
+            type: 'string',
+            description: 'Due date in ISO 8601 format (YYYY-MM-DD or RFC3339). If not provided, task has no due date'
+          }
+        },
+        required: ['title']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'update_task',
+      description: 'Update an existing task',
+      parameters: {
+        type: 'object',
+        properties: {
+          taskId: {
+            type: 'string',
+            description: 'ID of the task to update'
+          },
+          title: {
+            type: 'string',
+            description: 'Updated task title'
+          },
+          notes: {
+            type: 'string',
+            description: 'Updated task notes/description'
+          },
+          due: {
+            type: 'string',
+            description: 'Updated due date in ISO 8601 format (YYYY-MM-DD or RFC3339). Set to empty string to remove due date'
+          }
+        },
+        required: ['taskId']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'delete_task',
+      description: 'Delete a task',
+      parameters: {
+        type: 'object',
+        properties: {
+          taskId: {
+            type: 'string',
+            description: 'ID of the task to delete'
+          }
+        },
+        required: ['taskId']
+      }
+    }
   }
 ];
 
@@ -218,9 +313,12 @@ export async function processWithLLM(messages, contextInfo = '', timezoneInfo = 
       Your responses should be concise yet engaging. Be informative, helpful and personable - offer relevant insights, recommendations, or follow-up questions when appropriate, but keep the core response brief. Only provide extensive detail when explicitly requested.
       Responses MUST be Text-To-Speech friendly, and exclusively in English.
       If the transcription is not in English, is gibberish, or is unclear, respond: "I'm sorry, I don't understand that. Could you repeat?" and ask clarifying questions only if warranted.
-      You are expected to create, update, delete, and list meetings/details based on the user's voice commands, using the appropriate tool calls and/or generating responses based on the context and conversation history.
+      You are expected to create, update, delete, and list meetings/details and tasks based on the user's voice commands, using the appropriate tool calls and/or generating responses based on the context and conversation history.
       The user may ask you to search for events in the past, future, in specific time ranges (e.g. this week, next week, last month), in that case you must use the list_calendar_events tool call. Make sure you pass the correct timeMin and timeMax parameters to the list_calendar_events tool call. When in doubt, ask the user to clarify the time range.
+      The user may also ask you to search for tasks in specific time ranges, in that case you must use the list_tasks tool call with appropriate timeMin and timeMax parameters.
       Remain aware of the user's timezone and the current datetime in the user's timezone, and any potential ambiguity that might arise. Handle timezone ambiguities gracefully without mentioning technical details.
+      Remain aware user may use interchangeable vocabulary for the same event, task, etc. For example, "meeting with John" could be "call with John" or "call with John tomorrow". Similarly, "task to call John" could be "reminder to call John tomorrow" or "todo item: call John tomorrow".
+      Pay attention to update cases, don't just create a new event, prioritize updating the existing event if exists.
 
 
 
@@ -269,6 +367,33 @@ LIST MEETINGS:
 - "Show me my schedule today" → list_calendar_events
 - "What meetings do I have this week?" → list_calendar_events
 - "Do I have any meetings with John?" → list_calendar_events
+
+CREATE TASKS:
+- "Add task to review documents" → create_task (title: "Review documents")
+- "Create task to call John tomorrow" → create_task (title: "Call John", due: tomorrow's date)
+- "Set a reminder to finish the report" → create_task (title: "Finish the report")
+- "Add a task for next week to prepare presentation" → create_task (title: "Prepare presentation", due: next week's date)
+- "Task: buy groceries" → create_task (title: "Buy groceries")
+- If user mentions a due date, include it in the due parameter. If no due date, task can be created without one.
+
+UPDATE TASKS:
+- "Mark task 'Review documents' as done" → update_task (provide taskId from context)
+- "Change task due date to tomorrow" → update_task (provide taskId + new due date)
+- "Update task title to 'Review final documents'" → update_task (provide taskId + new title)
+- "Add notes to my task" → update_task (provide taskId + notes)
+- Always provide taskId from context. If multiple tasks match, ask for clarification.
+
+DELETE TASKS:
+- "Delete task 'Review documents'" → delete_task (use taskId from context)
+- "Remove my task to call John" → delete_task (use taskId from context)
+- "Mark task as complete and remove it" → delete_task (use taskId from context)
+- If multiple tasks match, ask for clarification
+
+LIST TASKS:
+- "What tasks do I have?" → list_tasks
+- "Show me my tasks for this week" → list_tasks (with appropriate timeMin/timeMax)
+- "What's on my task list today?" → list_tasks (with today's date range)
+- "List all my pending tasks" → list_tasks
 
 CRITICAL DATE PRECISION:
 - IMPORTANT: Present all times in human-readable format in the user's local timezone (no UTC/GMT/timezone offsets shown to user).

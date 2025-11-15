@@ -2,7 +2,7 @@ import express from 'express';
 import multer from 'multer';
 import { transcribeAudio } from '../services/whisperService.js';
 import { processWithLLM } from '../services/llmService.js';
-import { getEvents, createEvent, updateEvent, deleteEvent, getCalendar } from '../services/calendarService.js';
+import { getEvents, createEvent, updateEvent, deleteEvent, getCalendar, getTasks, createTask, updateTask, deleteTask } from '../services/calendarService.js';
 // Note: authAndRateLimit middleware is applied at app level (/api), so extractToken is not needed
 
 const router = express.Router();
@@ -64,6 +64,9 @@ async function executeTool(toolCall, token, userEmail = null, calendarType = nul
     case 'list_calendar_events':
       return await getEvents(token, params, userEmail, calendarType, additionalToken);
 
+    case 'list_tasks':
+      return await getTasks(token, params, userEmail, calendarType, additionalToken);
+
     case 'create_calendar_event':
       return await createEvent(token, params, calendarType || 'google');
 
@@ -72,6 +75,15 @@ async function executeTool(toolCall, token, userEmail = null, calendarType = nul
 
     case 'delete_calendar_event':
       return await deleteEvent(token, params.eventId, calendarType || 'google');
+
+    case 'create_task':
+      return await createTask(token, params, calendarType || 'google');
+
+    case 'update_task':
+      return await updateTask(token, params.taskId, params, calendarType || 'google');
+
+    case 'delete_task':
+      return await deleteTask(token, params.taskId, calendarType || 'google');
 
     default:
       return { success: false, error: `Unknown tool: ${name}` };
@@ -599,7 +611,7 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
       const params = JSON.parse(args);
 
       // Read-only action - execute and check if followed by mutating action
-      if (name === 'list_calendar_events') {
+      if (name === 'list_calendar_events' || name === 'list_tasks') {
         const calendarType = req.query.type || null;
         // Determine tokens based on calendar type:
         // - 'google' or null: token is from Authorization header
@@ -630,7 +642,8 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
           const nextName = nextToolCall.function.name;
           
           // If next action is mutating, continue to that instead of sending list result
-          if (nextName === 'create_calendar_event' || nextName === 'delete_calendar_event' || nextName === 'update_calendar_event') {
+          if (nextName === 'create_calendar_event' || nextName === 'delete_calendar_event' || nextName === 'update_calendar_event' ||
+              nextName === 'create_task' || nextName === 'delete_task' || nextName === 'update_task') {
             console.log(`🔄 List followed by ${nextName}, skipping list response to user`);
             
             // Update conversation history with next tool call
@@ -712,6 +725,28 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
           }
         }
 
+        // For delete and update tasks, fetch task details for confirmation
+        if ((nextName === 'delete_task' || nextName === 'update_task') && nextParams.taskId) {
+          try {
+            const calendarType = req.query.type || 'google';
+            // Use additionalToken from the list_tasks context (defined above)
+            const tasksResult = await getTasks(req.token, {}, null, calendarType, additionalToken);
+            
+            if (tasksResult.success && tasksResult.tasks) {
+              const task = tasksResult.tasks.find(t => t.id === nextParams.taskId);
+              if (task) {
+                actionPreview.taskDetails = {
+                  title: task.summary || task.title || '',
+                  notes: task.description || task.notes || '',
+                  due: task.start?.date || task.start?.dateTime || task.due || null
+                };
+              }
+            }
+          } catch (error) {
+            console.error(`Failed to fetch task details for ${nextName}:`, error);
+          }
+        }
+
             let confirmationMessage = '';
             switch (nextName) {
               case 'create_calendar_event':
@@ -740,6 +775,28 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
                   confirmationMessage = `Delete "${nextParams.summary || 'this event'}"?`;
                 }
                 break;
+              case 'create_task':
+                const dueDateStr = nextParams.due ? formatTimeWithUserTimezone(nextParams.due, req) : null;
+                if (dueDateStr) {
+                  confirmationMessage = `Create task "${nextParams.title}" due ${dueDateStr}?`;
+                } else {
+                  confirmationMessage = `Create task "${nextParams.title}"?`;
+                }
+                break;
+              case 'update_task':
+                if (actionPreview.taskDetails) {
+                  confirmationMessage = `Update task "${actionPreview.taskDetails.title}"?`;
+                } else {
+                  confirmationMessage = `Update task "${nextParams.title || 'this task'}"?`;
+                }
+                break;
+              case 'delete_task':
+                if (actionPreview.taskDetails) {
+                  confirmationMessage = `Delete task "${actionPreview.taskDetails.title}"?`;
+                } else {
+                  confirmationMessage = `Delete task "${nextParams.title || 'this task'}"?`;
+                }
+                break;
               default:
                 confirmationMessage = 'Confirm this action?';
             }
@@ -763,12 +820,12 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
         // If no mutating action follows, send list result to user
         const streamResponse = {
           type: 'response',
-          response: nextLlmResponse.message || 'Here are your events',
+          response: nextLlmResponse.message || (name === 'list_tasks' ? 'Here are your tasks' : 'Here are your events'),
           executed: true,
           result: toolResult
         };
         
-        console.log('📤 STREAM API RESPONSE (list_calendar_events):');
+        console.log(`📤 STREAM API RESPONSE (${name}):`);
         console.log(JSON.stringify(streamResponse, null, 2));
 
         res.write(`data: ${JSON.stringify(streamResponse)}\n\n`);
@@ -903,6 +960,29 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
           }
         }
 
+        // For delete and update tasks, fetch task details for confirmation
+        if ((name === 'delete_task' || name === 'update_task') && params.taskId) {
+          try {
+            const calendarType = req.query.type || 'google';
+            // Extract additionalToken for 'both' calendar type
+            const additionalToken = (calendarType === 'both') ? (req.headers['x-additional-token'] || null) : null;
+            const tasksResult = await getTasks(req.token, {}, null, calendarType, additionalToken);
+            
+            if (tasksResult.success && tasksResult.tasks) {
+              const task = tasksResult.tasks.find(t => t.id === params.taskId);
+              if (task) {
+                actionPreview.taskDetails = {
+                  title: task.summary || task.title || '',
+                  notes: task.description || task.notes || '',
+                  due: task.start?.date || task.start?.dateTime || task.due || null
+                };
+              }
+            }
+          } catch (error) {
+            console.error(`Failed to fetch task details for ${name}:`, error);
+          }
+        }
+
         let confirmationMessage = '';
         switch (name) {
           case 'create_calendar_event':
@@ -931,6 +1011,28 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
             confirmationMessage = `Delete "${params.summary || 'this event'}"?`;
           }
           break;
+          case 'create_task':
+            const dueDateStr = params.due ? formatTimeWithUserTimezone(params.due, req) : null;
+            if (dueDateStr) {
+              confirmationMessage = `Create task "${params.title}" due ${dueDateStr}?`;
+            } else {
+              confirmationMessage = `Create task "${params.title}"?`;
+            }
+            break;
+          case 'update_task':
+            if (actionPreview.taskDetails) {
+              confirmationMessage = `Update task "${actionPreview.taskDetails.title}"?`;
+            } else {
+              confirmationMessage = `Update task "${params.title || 'this task'}"?`;
+            }
+            break;
+          case 'delete_task':
+            if (actionPreview.taskDetails) {
+              confirmationMessage = `Delete task "${actionPreview.taskDetails.title}"?`;
+            } else {
+              confirmationMessage = `Delete task "${params.title || 'this task'}"?`;
+            }
+            break;
           default:
             confirmationMessage = 'Confirm this action?';
         }
@@ -1005,7 +1107,7 @@ router.post('/execute', async (req, res) => {
     }
 
     // Validate action type
-    const validActions = ['create_calendar_event', 'update_calendar_event', 'delete_calendar_event'];
+    const validActions = ['create_calendar_event', 'update_calendar_event', 'delete_calendar_event', 'create_task', 'update_task', 'delete_task'];
     if (!validActions.includes(action.type)) {
       return res.status(400).json({
         success: false,
@@ -1106,6 +1208,26 @@ router.post('/execute', async (req, res) => {
       case 'delete_calendar_event':
         result = await deleteEvent(req.token, action.eventId, calendarType);
         break;
+
+      case 'create_task':
+        result = await createTask(req.token, {
+          title: action.title,
+          notes: action.notes,
+          due: action.due
+        }, calendarType);
+        break;
+
+      case 'update_task':
+        result = await updateTask(req.token, action.taskId, {
+          title: action.title,
+          notes: action.notes,
+          due: action.due
+        }, calendarType);
+        break;
+
+      case 'delete_task':
+        result = await deleteTask(req.token, action.taskId, calendarType);
+        break;
     }
 
     if (result.success) {
@@ -1181,7 +1303,8 @@ router.post('/widget', upload.single('audio'), async (req, res) => {
         const params = JSON.parse(args);
 
         // Check if it's a mutating action that needs confirmation
-        if (name === 'create_calendar_event' || name === 'delete_calendar_event' || name === 'update_calendar_event') {
+        if (name === 'create_calendar_event' || name === 'delete_calendar_event' || name === 'update_calendar_event' ||
+            name === 'create_task' || name === 'delete_task' || name === 'update_task') {
           const actionPreview = {
             type: name,
             ...params
@@ -1216,8 +1339,8 @@ router.post('/widget', upload.single('audio'), async (req, res) => {
           });
         }
 
-        // If it's a read-only action, execute it and continue
-        if (name === 'list_calendar_events') {
+      // If it's a read-only action, execute it and continue
+      if (name === 'list_calendar_events' || name === 'list_tasks') {
           try {
             const calendarType = req.query.type || null;
             // Determine tokens based on calendar type:

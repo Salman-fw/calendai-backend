@@ -133,3 +133,213 @@ export async function getTasks(token, filters = {}) {
   }
 }
 
+/**
+ * Create a new task in Google Tasks
+ * @param {string} token - OAuth access token
+ * @param {Object} taskData - Task data
+ * @param {string} taskData.title - Task title (required)
+ * @param {string} [taskData.notes] - Task notes/description
+ * @param {string} [taskData.due] - Due date in RFC3339 format (YYYY-MM-DD)
+ * @param {string} [taskListId] - Task list ID (defaults to first available list)
+ * @returns {Promise<{success: boolean, task?: Object, error?: string}>}
+ */
+export async function createTask(token, taskData, taskListId = null) {
+  try {
+    if (!token) {
+      return { success: false, error: 'Access token is required' };
+    }
+    if (!taskData?.title) {
+      return { success: false, error: 'Task title is required' };
+    }
+
+    const tasksClient = getTasksClient(token);
+    
+    // Get task list ID if not provided
+    let listId = taskListId;
+    if (!listId) {
+      const taskListsResponse = await tasksClient.tasklists.list({ maxResults: 1 });
+      const taskLists = taskListsResponse.data.items || [];
+      if (taskLists.length === 0) {
+        return { success: false, error: 'No task lists available' };
+      }
+      listId = taskLists[0].id;
+    }
+
+    // Build task object
+    const task = {
+      title: taskData.title,
+      notes: taskData.notes || '',
+    };
+
+    // Add due date if provided - normalize to RFC3339 format
+    if (taskData.due) {
+      // If due is just a date (YYYY-MM-DD), convert to RFC3339 with time (midnight UTC)
+      if (/^\d{4}-\d{2}-\d{2}$/.test(taskData.due)) {
+        // Date only - add time component (midnight UTC)
+        task.due = `${taskData.due}T00:00:00.000Z`;
+      } else {
+        // Already has time component, use as-is
+        task.due = taskData.due;
+      }
+    }
+
+    const response = await tasksClient.tasks.insert({
+      tasklist: listId,
+      resource: task
+    });
+
+    return {
+      success: true,
+      task: response.data
+    };
+  } catch (error) {
+    console.error('Create task error:', error);
+    return {
+      success: false,
+      error: error.message || 'Failed to create task'
+    };
+  }
+}
+
+/**
+ * Update an existing task in Google Tasks
+ * @param {string} token - OAuth access token
+ * @param {string} taskId - Task ID to update
+ * @param {Object} taskData - Updated task data (partial)
+ * @param {string} [taskListId] - Task list ID (defaults to first available list)
+ * @returns {Promise<{success: boolean, task?: Object, error?: string}>}
+ */
+export async function updateTask(token, taskId, taskData, taskListId = null) {
+  try {
+    if (!token) {
+      return { success: false, error: 'Access token is required' };
+    }
+    if (!taskId) {
+      return { success: false, error: 'Task ID is required' };
+    }
+
+    const tasksClient = getTasksClient(token);
+    
+    // Get task list ID if not provided
+    let listId = taskListId;
+    if (!listId) {
+      const taskListsResponse = await tasksClient.tasklists.list({ maxResults: 1 });
+      const taskLists = taskListsResponse.data.items || [];
+      if (taskLists.length === 0) {
+        return { success: false, error: 'No task lists available' };
+      }
+      listId = taskLists[0].id;
+    }
+
+    // First, get the existing task to merge updates
+    let existingTask;
+    try {
+      const getResponse = await tasksClient.tasks.get({
+        tasklist: listId,
+        task: taskId
+      });
+      existingTask = getResponse.data;
+    } catch (error) {
+      return { success: false, error: `Task not found: ${error.message}` };
+    }
+
+    // Build update payload - only include fields that are being updated
+    const updatePayload = {
+      id: taskId,
+      title: taskData.title !== undefined ? taskData.title : existingTask.title,
+      notes: taskData.notes !== undefined ? taskData.notes : existingTask.notes,
+    };
+
+    // Update due date if provided - normalize to RFC3339 format
+    if (taskData.due !== undefined) {
+      if (taskData.due === null || taskData.due === '') {
+        updatePayload.due = null; // Remove due date
+      } else if (/^\d{4}-\d{2}-\d{2}$/.test(taskData.due)) {
+        // Date only - add time component (midnight UTC)
+        updatePayload.due = `${taskData.due}T00:00:00.000Z`;
+      } else {
+        // Already has time component, use as-is
+        updatePayload.due = taskData.due;
+      }
+    }
+
+    const response = await tasksClient.tasks.update({
+      tasklist: listId,
+      task: taskId,
+      resource: updatePayload
+    });
+
+    return {
+      success: true,
+      task: response.data
+    };
+  } catch (error) {
+    console.error('Update task error:', error);
+    return {
+      success: false,
+      error: error.message || 'Failed to update task'
+    };
+  }
+}
+
+/**
+ * Delete a task from Google Tasks
+ * @param {string} token - OAuth access token
+ * @param {string} taskId - Task ID to delete
+ * @param {string} [taskListId] - Task list ID (defaults to first available list)
+ * @returns {Promise<{success: boolean, task?: Object, message?: string, error?: string}>}
+ */
+export async function deleteTask(token, taskId, taskListId = null) {
+  try {
+    if (!token) {
+      return { success: false, error: 'Access token is required' };
+    }
+    if (!taskId) {
+      return { success: false, error: 'Task ID is required' };
+    }
+
+    const tasksClient = getTasksClient(token);
+    
+    // Get task list ID if not provided
+    let listId = taskListId;
+    if (!listId) {
+      const taskListsResponse = await tasksClient.tasklists.list({ maxResults: 1 });
+      const taskLists = taskListsResponse.data.items || [];
+      if (taskLists.length === 0) {
+        return { success: false, error: 'No task lists available' };
+      }
+      listId = taskLists[0].id;
+    }
+
+    // Fetch task details before deleting
+    let taskDetails = null;
+    try {
+      const getResponse = await tasksClient.tasks.get({
+        tasklist: listId,
+        task: taskId
+      });
+      taskDetails = getResponse.data;
+    } catch (error) {
+      console.warn('Could not fetch task details before deletion:', error.message);
+      // Continue with deletion even if fetch fails
+    }
+
+    await tasksClient.tasks.delete({
+      tasklist: listId,
+      task: taskId
+    });
+
+    return {
+      success: true,
+      task: taskDetails,
+      message: 'Task deleted successfully'
+    };
+  } catch (error) {
+    console.error('Delete task error:', error);
+    return {
+      success: false,
+      error: error.message || 'Failed to delete task'
+    };
+  }
+}
+

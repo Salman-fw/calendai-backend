@@ -1,5 +1,5 @@
 import express from 'express';
-import { createEvent, updateEvent, deleteEvent, getEvents } from '../services/calendarService.js';
+import { createEvent, updateEvent, deleteEvent, getEvents, createTask, updateTask, deleteTask } from '../services/calendarService.js';
 
 const router = express.Router();
 
@@ -176,6 +176,94 @@ router.delete('/events/:eventId', async (req, res) => {
     res.status(500).json({ 
       success: false, 
       error: error.message || 'Failed to delete calendar event'
+    });
+  }
+});
+
+// POST /api/calendar/tasks - Create a new task
+router.post('/tasks', async (req, res) => {
+  try {
+    const { type } = req.query;
+    const calendarType = type || 'google'; // Default to Google
+    
+    if (!req.token) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    const result = await createTask(req.token, req.body, calendarType);
+    
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(400).json(result);
+    }
+  } catch (error) {
+    console.error('Create task route error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to create task'
+    });
+  }
+});
+
+// PUT /api/calendar/tasks/:taskId - Update a task
+router.put('/tasks/:taskId', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { type } = req.query;
+    const calendarType = type || 'google'; // Default to Google
+    
+    if (!req.token) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    if (!taskId) {
+      return res.status(400).json({ success: false, error: 'Task ID is required' });
+    }
+
+    const result = await updateTask(req.token, taskId, req.body, calendarType);
+    
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(400).json(result);
+    }
+  } catch (error) {
+    console.error('Update task route error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to update task'
+    });
+  }
+});
+
+// DELETE /api/calendar/tasks/:taskId - Delete a task
+router.delete('/tasks/:taskId', async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const { type } = req.query;
+    const calendarType = type || 'google'; // Default to Google
+    
+    if (!req.token) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    if (!taskId) {
+      return res.status(400).json({ success: false, error: 'Task ID is required' });
+    }
+
+    const result = await deleteTask(req.token, taskId, calendarType);
+    
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(500).json(result);
+    }
+  } catch (error) {
+    console.error('Delete task route error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || 'Failed to delete task'
     });
   }
 });

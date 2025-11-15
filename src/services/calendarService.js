@@ -290,3 +290,164 @@ export async function deleteEvent(token, eventId, calendarType = 'google') {
 export function getCalendar(token) {
   return googleCalendarService.getCalendar(token);
 }
+
+/**
+ * Get tasks from Google and/or Outlook task lists
+ * @param {string} token - OAuth access token (from Authorization header)
+ * @param {Object} filters - Filter options
+ * @param {string} [userEmail] - User email for profile lookup
+ * @param {string} [calendarType] - Explicit calendar type ('google', 'outlook', 'both')
+ * @param {string} [additionalToken] - Additional token for 'both' type (from X-Additional-Token header)
+ * @returns {Promise<{success: boolean, tasks?: Array, error?: string}>}
+ */
+export async function getTasks(token, filters = {}, userEmail = null, calendarType = null, additionalToken = null) {
+  try {
+    if (!token) {
+      return { success: false, error: 'Access token is required' };
+    }
+
+    const type = await getCalendarType(userEmail, calendarType);
+    const allTasks = [];
+
+    // Determine which tokens to use based on calendar type
+    const tokenForGoogle = (type === 'google' || type === 'both' || !type) ? token : null;
+    const tokenForOutlook = (type === 'outlook') ? token : (type === 'both' ? additionalToken : null);
+
+    if (type === 'both') {
+      // Fetch from both task lists in parallel
+      const [googleResult, outlookResult] = await Promise.all([
+        tokenForGoogle
+          ? googleTasksService.getTasks(tokenForGoogle, filters).catch(err => {
+              console.warn('Google Tasks fetch error:', err.message);
+              return { success: false, tasks: [] };
+            })
+          : Promise.resolve({ success: false, tasks: [] }),
+        tokenForOutlook
+          ? outlookTasksService.getTasks(tokenForOutlook, filters).catch(err => {
+              console.warn('Outlook Tasks fetch error:', err.message);
+              return { success: false, tasks: [] };
+            })
+          : Promise.resolve({ success: false, tasks: [] })
+      ]);
+
+      if (googleResult.success && googleResult.tasks) {
+        const tasks = googleResult.tasks.map(task => ({
+          ...task,
+          source: 'google',
+          isTask: true
+        }));
+        allTasks.push(...tasks);
+      }
+      if (outlookResult.success && outlookResult.tasks) {
+        const tasks = outlookResult.tasks.map(task => ({
+          ...task,
+          source: 'outlook',
+          isTask: true
+        }));
+        allTasks.push(...tasks);
+      }
+    } else {
+      // Single calendar - fetch sequentially
+      if (type === 'google' || !type) {
+        if (tokenForGoogle) {
+          try {
+            const result = await googleTasksService.getTasks(tokenForGoogle, filters);
+            if (result.success && result.tasks) {
+              const tasks = result.tasks.map(task => ({
+                ...task,
+                source: 'google',
+                isTask: true
+              }));
+              allTasks.push(...tasks);
+            }
+          } catch (error) {
+            console.error('Google Tasks fetch error:', error);
+          }
+        }
+      }
+
+      if (type === 'outlook') {
+        if (tokenForOutlook) {
+          try {
+            const result = await outlookTasksService.getTasks(tokenForOutlook, filters);
+            if (result.success && result.tasks) {
+              const tasks = result.tasks.map(task => ({
+                ...task,
+                source: 'outlook',
+                isTask: true
+              }));
+              allTasks.push(...tasks);
+            }
+          } catch (error) {
+            console.error('Outlook Tasks fetch error:', error);
+          }
+        }
+      }
+    }
+
+    // Sort tasks by due date
+    allTasks.sort((a, b) => {
+      const aDue = new Date(a.start?.date || a.start?.dateTime || 0);
+      const bDue = new Date(b.start?.date || b.start?.dateTime || 0);
+      return aDue - bDue;
+    });
+
+    const limitedTasks = filters.maxResults 
+      ? allTasks.slice(0, filters.maxResults)
+      : allTasks;
+
+    return {
+      success: true,
+      tasks: limitedTasks
+    };
+  } catch (error) {
+    console.error('Get tasks error:', error);
+    return {
+      success: false,
+      error: error.message || 'Failed to fetch tasks'
+    };
+  }
+}
+
+/**
+ * Create a task - routes to appropriate service
+ * @param {string} token - OAuth access token
+ * @param {Object} taskData - Task data
+ * @param {string} [calendarType='google'] - Calendar type ('google' or 'outlook')
+ * @returns {Promise<{success: boolean, task?: Object, error?: string}>}
+ */
+export async function createTask(token, taskData, calendarType = 'google') {
+  if (calendarType === 'outlook') {
+    return await outlookTasksService.createTask(token, taskData);
+  }
+  return await googleTasksService.createTask(token, taskData);
+}
+
+/**
+ * Update a task - routes to appropriate service
+ * @param {string} token - OAuth access token
+ * @param {string} taskId - Task ID to update
+ * @param {Object} taskData - Updated task data
+ * @param {string} [calendarType='google'] - Calendar type ('google' or 'outlook')
+ * @returns {Promise<{success: boolean, task?: Object, error?: string}>}
+ */
+export async function updateTask(token, taskId, taskData, calendarType = 'google') {
+  if (calendarType === 'outlook') {
+    return await outlookTasksService.updateTask(token, taskId, taskData);
+  }
+  return await googleTasksService.updateTask(token, taskId, taskData);
+}
+
+/**
+ * Delete a task - routes to appropriate service
+ * @param {string} token - OAuth access token
+ * @param {string} taskId - Task ID to delete
+ * @param {string} [calendarType='google'] - Calendar type ('google' or 'outlook')
+ * @returns {Promise<{success: boolean, message?: string, error?: string}>}
+ */
+export async function deleteTask(token, taskId, calendarType = 'google') {
+  if (calendarType === 'outlook') {
+    return await outlookTasksService.deleteTask(token, taskId);
+  }
+  return await googleTasksService.deleteTask(token, taskId);
+}

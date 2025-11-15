@@ -52,6 +52,7 @@ export async function getTasks(token, filters = {}) {
     const taskListsData = await taskListsResponse.json();
     const taskListCount = (taskListsData.value || []).length;
     console.log(`[OutlookTasksService] Fetched ${taskListCount} task lists from Outlook API`);
+    console.log(`[OutlookTasksService] Task lists data: ${JSON.stringify(taskListsData, null, 2)}`);
 
     const taskListIds = (taskListsData.value || []).map(list => list.id);
     
@@ -166,5 +167,352 @@ export async function getTasks(token, filters = {}) {
       error: error.message || 'Failed to fetch Outlook tasks'
     };
   }
+}
+
+/**
+ * Get default task list ID (first available list)
+ * @param {string} token - OAuth access token
+ * @returns {Promise<string|null>} Task list ID or null
+ */
+async function getDefaultTaskListId(token) {
+  try {
+    const response = await fetch(`${GRAPH_API_BASE}/me/todo/lists`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const data = await response.json();
+    const taskLists = data.value || [];
+    return taskLists.length > 0 ? taskLists[0].id : null;
+  } catch (error) {
+    console.error('Error getting default task list:', error);
+    return null;
+  }
+}
+
+/**
+ * Transform task data to Microsoft Graph format
+ * @param {Object} taskData - Task data in our format
+ * @returns {Object} Microsoft Graph task format
+ */
+function transformToGraphTaskFormat(taskData) {
+  const graphTask = {
+    title: taskData.title || '',
+  };
+
+  if (taskData.notes) {
+    graphTask.body = {
+      contentType: 'text',
+      content: taskData.notes
+    };
+  }
+
+  if (taskData.due) {
+    // Convert due date to Microsoft Graph format (ISO 8601 with time)
+    // If it's just a date (YYYY-MM-DD), parse it and set to midnight UTC
+    let dueDate;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(taskData.due)) {
+      // Date only - parse as UTC midnight
+      dueDate = new Date(`${taskData.due}T00:00:00.000Z`);
+    } else {
+      // Already has time component
+      dueDate = new Date(taskData.due);
+    }
+    graphTask.dueDateTime = {
+      dateTime: dueDate.toISOString(),
+      timeZone: 'UTC'
+    };
+  }
+
+  return graphTask;
+}
+
+/**
+ * Transform Microsoft Graph task to our format
+ * @param {Object} graphTask - Microsoft Graph task
+ * @returns {Object} Task in our format
+ */
+function transformFromGraphTaskFormat(graphTask) {
+  return {
+    id: graphTask.id,
+    title: graphTask.title || '',
+    notes: graphTask.body?.content || '',
+    due: graphTask.dueDateTime?.dateTime || null,
+    status: graphTask.status || 'notStarted'
+  };
+}
+
+/**
+ * Create a new task in Microsoft To Do
+ * @param {string} token - OAuth access token
+ * @param {Object} taskData - Task data
+ * @param {string} taskData.title - Task title (required)
+ * @param {string} [taskData.notes] - Task notes/description
+ * @param {string} [taskData.due] - Due date in ISO 8601 format
+ * @param {string} [taskListId] - Task list ID (defaults to first available list)
+ * @returns {Promise<{success: boolean, task?: Object, error?: string}>}
+ */
+export async function createTask(token, taskData, taskListId = null) {
+  try {
+    if (!token) {
+      return { success: false, error: 'Access token is required' };
+    }
+    if (!taskData?.title) {
+      return { success: false, error: 'Task title is required' };
+    }
+
+    // Get task list ID if not provided
+    let listId = taskListId;
+    if (!listId) {
+      listId = await getDefaultTaskListId(token);
+      if (!listId) {
+        return { success: false, error: 'No task lists available' };
+      }
+    }
+
+    // Transform to Microsoft Graph format
+    const graphTask = transformToGraphTaskFormat(taskData);
+
+    const response = await fetch(`${GRAPH_API_BASE}/me/todo/lists/${listId}/tasks`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(graphTask)
+    });
+
+    if (!response.ok) {
+      const errorMessage = await parseGraphError(response);
+      throw new Error(errorMessage);
+    }
+
+    const data = await response.json();
+    const task = transformFromGraphTaskFormat(data);
+
+    return {
+      success: true,
+      task: task
+    };
+  } catch (error) {
+    console.error('Create Outlook task error:', error);
+    return {
+      success: false,
+      error: error.message || 'Failed to create Outlook task'
+    };
+  }
+}
+
+/**
+ * Update an existing task in Microsoft To Do
+ * @param {string} token - OAuth access token
+ * @param {string} taskId - Task ID to update
+ * @param {Object} taskData - Updated task data (partial)
+ * @param {string} [taskListId] - Task list ID (defaults to first available list)
+ * @returns {Promise<{success: boolean, task?: Object, error?: string}>}
+ */
+export async function updateTask(token, taskId, taskData, taskListId = null) {
+  try {
+    if (!token) {
+      return { success: false, error: 'Access token is required' };
+    }
+    if (!taskId) {
+      return { success: false, error: 'Task ID is required' };
+    }
+
+    // Get task list ID if not provided
+    let listId = taskListId;
+    if (!listId) {
+      listId = await getDefaultTaskListId(token);
+      if (!listId) {
+        return { success: false, error: 'No task lists available' };
+      }
+    }
+
+    // First, get the existing task to merge updates
+    const getResponse = await fetch(`${GRAPH_API_BASE}/me/todo/lists/${listId}/tasks/${taskId}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!getResponse.ok) {
+      const errorMessage = await parseGraphError(getResponse);
+      throw new Error(errorMessage);
+    }
+
+    const existingTask = await getResponse.json();
+    
+    // Build update payload - only include fields that are being updated
+    const updatePayload = {};
+    
+    if (taskData.title !== undefined) {
+      updatePayload.title = taskData.title;
+    }
+    
+    if (taskData.notes !== undefined) {
+      updatePayload.body = {
+        contentType: 'text',
+        content: taskData.notes
+      };
+    }
+    
+    if (taskData.due !== undefined) {
+      if (taskData.due && taskData.due !== '') {
+        // Convert due date to Microsoft Graph format
+        let dueDate;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(taskData.due)) {
+          // Date only - parse as UTC midnight
+          dueDate = new Date(`${taskData.due}T00:00:00.000Z`);
+        } else {
+          // Already has time component
+          dueDate = new Date(taskData.due);
+        }
+        updatePayload.dueDateTime = {
+          dateTime: dueDate.toISOString(),
+          timeZone: 'UTC'
+        };
+      } else {
+        // Remove due date by setting to null
+        updatePayload.dueDateTime = null;
+      }
+    }
+
+    // Only send PATCH if there are updates
+    if (Object.keys(updatePayload).length > 0) {
+      const patchResponse = await fetch(`${GRAPH_API_BASE}/me/todo/lists/${listId}/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(updatePayload)
+      });
+
+      if (!patchResponse.ok) {
+        const errorMessage = await parseGraphError(patchResponse);
+        throw new Error(errorMessage);
+      }
+    }
+
+    // Fetch updated task to return
+    const updatedResponse = await fetch(`${GRAPH_API_BASE}/me/todo/lists/${listId}/tasks/${taskId}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!updatedResponse.ok) {
+      const errorMessage = await parseGraphError(updatedResponse);
+      throw new Error(errorMessage);
+    }
+
+    const updatedTask = await updatedResponse.json();
+    const task = transformFromGraphTaskFormat(updatedTask);
+
+    return {
+      success: true,
+      task: task
+    };
+  } catch (error) {
+    console.error('Update Outlook task error:', error);
+    return {
+      success: false,
+      error: error.message || 'Failed to update Outlook task'
+    };
+  }
+}
+
+/**
+ * Delete a task from Microsoft To Do
+ * @param {string} token - OAuth access token
+ * @param {string} taskId - Task ID to delete
+ * @param {string} [taskListId] - Task list ID (defaults to first available list)
+ * @returns {Promise<{success: boolean, task?: Object, message?: string, error?: string}>}
+ */
+export async function deleteTask(token, taskId, taskListId = null) {
+  try {
+    if (!token) {
+      return { success: false, error: 'Access token is required' };
+    }
+    if (!taskId) {
+      return { success: false, error: 'Task ID is required' };
+    }
+
+    // Get task list ID if not provided
+    let listId = taskListId;
+    if (!listId) {
+      listId = await getDefaultTaskListId(token);
+      if (!listId) {
+        return { success: false, error: 'No task lists available' };
+      }
+    }
+
+    // Fetch task details before deleting
+    let taskDetails = null;
+    try {
+      const getResponse = await fetch(`${GRAPH_API_BASE}/me/todo/lists/${listId}/tasks/${taskId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      if (getResponse.ok) {
+        const graphTask = await getResponse.json();
+        taskDetails = transformFromGraphTaskFormat(graphTask);
+      }
+    } catch (error) {
+      console.warn('Could not fetch task details before deletion:', error.message);
+    }
+
+    const response = await fetch(`${GRAPH_API_BASE}/me/todo/lists/${listId}/tasks/${taskId}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) {
+      const errorMessage = await parseGraphError(response);
+      throw new Error(errorMessage);
+    }
+
+    return {
+      success: true,
+      task: taskDetails,
+      message: 'Task deleted successfully'
+    };
+  } catch (error) {
+    console.error('Delete Outlook task error:', error);
+    return {
+      success: false,
+      error: error.message || 'Failed to delete Outlook task'
+    };
+  }
+}
+
+/**
+ * Helper function to parse Microsoft Graph API errors
+ * @param {Response} response - Fetch response object
+ * @returns {Promise<string>} Error message
+ */
+async function parseGraphError(response) {
+  let errorMessage = `Microsoft Graph API error: ${response.status}`;
+  try {
+    const errorData = await response.json();
+    errorMessage = errorData.error?.message || errorData.error?.code || errorMessage;
+  } catch {
+    const errorText = await response.text();
+    if (errorText) errorMessage += ` - ${errorText}`;
+  }
+  return errorMessage;
 }
 
