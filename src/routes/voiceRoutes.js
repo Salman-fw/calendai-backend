@@ -457,19 +457,28 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
 
+    console.log('📥 /stream endpoint called');
+    console.log('📥 Has file:', !!req.file);
+    console.log('📥 Body keys:', Object.keys(req.body || {}));
+    console.log('📥 Body text:', req.body?.text);
+    console.log('📥 Body history:', req.body?.history ? 'present' : 'missing');
+
     let conversationHistory = [];
 
     // Parse conversation history if provided
-    if (req.body.history) {
+    if (req.body?.history) {
       try {
         conversationHistory = JSON.parse(req.body.history);
+        console.log('📥 Parsed history, length:', conversationHistory.length);
       } catch (e) {
         console.error('Failed to parse history:', e);
       }
     }
 
-    // Step 1: Transcribe audio
+    // Step 1: Transcribe audio or get text input
     let userMessage;
+    let inputModality = 'voice'; // Default to voice
+    
     if (req.file) {
       // Log audio file size
       console.log(`Received audio file: ${req.file.originalname}, size: ${req.file.size} bytes`);
@@ -493,11 +502,20 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
       }
 
       userMessage = transcription.text;
+      inputModality = 'voice';
       
       // Send transcription event
       res.write(`data: ${JSON.stringify({ type: 'transcription', text: userMessage })}\n\n`);
+    } else if (req.body?.text) {
+      // Handle text input (for text chat)
+      userMessage = req.body.text;
+      inputModality = 'text';
+      console.log(`✅ Received text input: ${userMessage}`);
     } else {
-      res.write(`data: ${JSON.stringify({ type: 'error', error: 'Audio file input required' })}\n\n`);
+      console.log('❌ No audio file or text input found');
+      console.log('❌ req.body:', req.body);
+      console.log('❌ req.body?.text:', req.body?.text);
+      res.write(`data: ${JSON.stringify({ type: 'error', error: 'Either audio file or text input required' })}\n\n`);
       res.end();
       return;
     }
@@ -583,6 +601,7 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
     });
 
     console.log('🔍 DEBUG - Transcribed text:', userMessage);
+    console.log('🔍 DEBUG - Input modality:', inputModality);
     console.log('🔍 DEBUG - Conversation history before LLM:', JSON.stringify(conversationHistory, null, 2));
     console.log('🔍 DEBUG - Context info:', contextInfo);
 
@@ -593,7 +612,7 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
       deviceTimestamp: req.headers['x-device-timestamp']
     };
 
-    const llmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo);
+    const llmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo, inputModality);
 
     if (!llmResponse.success) {
       console.log('❌ DEBUG - LLM response failed:', llmResponse.error);

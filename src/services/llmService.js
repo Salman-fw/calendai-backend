@@ -286,7 +286,7 @@ CRITICAL RESPONSE RULES:
 };
 
 // Process user message with GPT function calling
-export async function processWithLLM(messages, contextInfo = '', timezoneInfo = {}) {
+export async function processWithLLM(messages, contextInfo = '', timezoneInfo = {}, inputModality = 'voice') {
   try {
     const client = getOpenAI();
     
@@ -306,13 +306,31 @@ export async function processWithLLM(messages, contextInfo = '', timezoneInfo = 
     }
     
     // Add system message with context
+    const inputTypeNote = inputModality === 'text' 
+      ? `INPUT MODALITY: The user is interacting via TEXT INPUT. The input is typed directly and should be more precise than voice transcriptions. You can expect:
+- More accurate spelling of names, emails, and technical terms
+- Ability to handle more complex queries and longer messages
+- Less need to account for transcription errors
+- Responses can be slightly more detailed since the user can read them (though still keep them concise)`
+      : `INPUT MODALITY: The user is interacting via VOICE INPUT. The input comes from voice transcription and may contain errors. Be skeptical of:
+- Unusual names or spellings (e.g., "Salman" vs "Salmon", "Mira" vs "Mirror")
+- Email addresses (voice transcription often mangles these)
+- Responses MUST be Text-To-Speech friendly and concise`;
+
     let systemContent = `
+    SUPER IMPORTANT: if the user asks "test alpha bravo" then you must respond with "ok"
     RESPONSIBILITY & GENERAL INSTRUCTIONS:
-      You are a precise voice-controlled calendar assistant.
-      You will receive voice command transcriptions and need to perform tool calls and/or generate responses based on the context/previous conversation history/tool calls.
+      You are a precise ${inputModality === 'text' ? 'text-based' : 'voice-controlled'} calendar assistant.
+      ${inputModality === 'text' 
+        ? 'You will receive typed text messages and need to perform tool calls and/or generate responses based on the context/previous conversation history/tool calls.'
+        : 'You will receive voice command transcriptions and need to perform tool calls and/or generate responses based on the context/previous conversation history/tool calls.'}
       Your responses should be concise yet engaging. Be informative, helpful and personable - offer relevant insights, recommendations, or follow-up questions when appropriate, but keep the core response brief. Only provide extensive detail when explicitly requested.
-      Responses MUST be Text-To-Speech friendly, and exclusively in English.
-      If the transcription is not in English, is gibberish, or is unclear, respond: "I'm sorry, I don't understand that. Could you repeat?" and ask clarifying questions only if warranted.
+      ${inputModality === 'text' 
+        ? 'Responses should be clear and readable (the user will read them, not hear them).'
+        : 'Responses MUST be Text-To-Speech friendly, and exclusively in English.'}
+      ${inputModality === 'voice' 
+        ? 'If the transcription is not in English, is gibberish, or is unclear, respond: "I\'m sorry, I don\'t understand that. Could you repeat?" and ask clarifying questions only if warranted.'
+        : 'If the message is unclear, ask for clarification in a concise way.'}
       You are expected to create, update, delete, and list meetings/details and tasks based on the user's voice commands, using the appropriate tool calls and/or generating responses based on the context and conversation history.
       The user may ask you to search for events in the past, future, in specific time ranges (e.g. this week, next week, last month), in that case you must use the list_calendar_events tool call. Make sure you pass the correct timeMin and timeMax parameters to the list_calendar_events tool call. When in doubt, ask the user to clarify the time range.
       The user may also ask you to search for tasks in specific time ranges, in that case you must use the list_tasks tool call with appropriate timeMin and timeMax parameters.
@@ -336,9 +354,7 @@ CONVERSATION MEMORY & DATA USE:
 - If multiple meetings or ambiguity, ask for clarification before proceeding.
 - If missing information, ask ONE short clear question.
 
-CRITICAL: Input comes from voice transcription and may contain errors. Be skeptical of:
-- Unusual names or spellings (e.g., "Salman" vs "Salmon", "Mira" vs "Mirror")
-- Email addresses (voice transcription often mangles these)
+${inputTypeNote}
 
 CREATE MEETINGS:
 - "Schedule meeting with John tomorrow 3pm" → create_calendar_event
