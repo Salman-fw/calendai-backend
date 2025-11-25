@@ -1,3 +1,5 @@
+import { convert } from 'html-to-text';
+
 const GRAPH_API_BASE = 'https://graph.microsoft.com/v1.0';
 
 /**
@@ -59,10 +61,30 @@ function transformToGraphFormat(eventData) {
  * @returns {Object} Google Calendar event format
  */
 function transformFromGraphFormat(graphEvent) {
-  return {
+  // Extract plain text from HTML body - always convert if HTML tags are present
+  let description = graphEvent.body?.content || '';
+  if (description && (description.includes('<') || graphEvent.body?.contentType === 'HTML')) {
+    try {
+      description = convert(description, {
+        wordwrap: false,
+        preserveNewlines: false,
+        trimEmptyLines: true,
+        collapseWhitespace: true
+      });
+      // Post-process to reduce excessive whitespace
+      description = description
+        .replace(/\n{3,}/g, '\n\n')  // Max 2 consecutive newlines
+        .replace(/[ \t]+/g, ' ')      // Collapse spaces/tabs
+        .trim();
+    } catch (error) {
+      console.warn('[Outlook] Failed to convert HTML to text:', error.message);
+    }
+  }
+
+  const transformed = {
     id: graphEvent.id,
     summary: graphEvent.subject || '',
-    description: graphEvent.body?.content || '',
+    description,
     start: {
       dateTime: graphEvent.start?.dateTime,
       timeZone: graphEvent.start?.timeZone || 'UTC'
@@ -76,6 +98,27 @@ function transformFromGraphFormat(graphEvent) {
       displayName: a.emailAddress?.name
     }))
   };
+
+  // Extract Teams meeting link if available - match Google Calendar's structure
+  const teamsLink = graphEvent.onlineMeeting?.joinUrl || graphEvent.onlineMeetingUrl;
+  if (teamsLink) {
+    // Add hangoutLink for frontend compatibility (same as Google Calendar)
+    transformed.hangoutLink = teamsLink;
+    // Also add conferenceData structure (for future frontend updates)
+    transformed.conferenceData = {
+      entryPoints: [{
+        entryPointType: 'video',
+        uri: teamsLink,
+        label: teamsLink.split('/').pop() || teamsLink
+      }]
+    };
+    // Keep onlineMeeting structure for frontend compatibility
+    transformed.onlineMeeting = {
+      joinUrl: teamsLink
+    };
+  }
+
+  return transformed;
 }
 
 /**

@@ -3,6 +3,8 @@ import multer from 'multer';
 import { transcribeAudio } from '../services/whisperService.js';
 import { processWithLLM } from '../services/llmService.js';
 import { getEvents, createEvent, updateEvent, deleteEvent, getCalendar, getTasks, createTask, updateTask, deleteTask } from '../services/calendarService.js';
+import logger from '../utils/appLogger.js';
+import { recordInteractionLog } from '../utils/interactionLogger.js';
 // Note: authAndRateLimit middleware is applied at app level (/api), so extractToken is not needed
 
 const router = express.Router();
@@ -121,6 +123,8 @@ router.post('/command', upload.single('audio'), async (req, res) => {
   try {
     let userMessage;
     let conversationHistory = [];
+    let inputModality = 'voice';
+    const loggingCalendarType = req.query.type || 'google';
 
     // Parse conversation history if provided
     if (req.body.history) {
@@ -160,6 +164,8 @@ router.post('/command', upload.single('audio'), async (req, res) => {
         error: 'Either audio file or text input required'
       });
     }
+
+    inputModality = req.file ? 'voice' : 'text';
 
     // Fetch context (today's meetings + recent contacts)
     let contextInfo = '';
@@ -247,7 +253,9 @@ router.post('/command', upload.single('audio'), async (req, res) => {
       deviceTimestamp: req.headers['x-device-timestamp']
     };
 
+    const llmStart = Date.now();
     const llmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo);
+    const llmLatencyMs = Date.now() - llmStart;
 
     if (!llmResponse.success) {
       console.log('❌ DEBUG - LLM response failed:', llmResponse.error);
@@ -261,6 +269,20 @@ router.post('/command', upload.single('audio'), async (req, res) => {
       const toolCall = llmResponse.toolCalls[0];
       const { name, arguments: args } = toolCall.function;
       const params = JSON.parse(args);
+      const toolPayload = {
+        modality: inputModality,
+        user_instruction: userMessage,
+        llm_interaction: llmResponse.message,
+        tool_call: {
+          name,
+          arguments: params
+        },
+        metadata: {
+          endpoint: 'voice_command',
+          request_id: req.requestId,
+          latency_ms: llmLatencyMs
+        }
+      };
 
       // Check if this is a read-only action (execute immediately)
       if (name === 'list_calendar_events') {
@@ -286,6 +308,16 @@ router.post('/command', upload.single('audio'), async (req, res) => {
         });
 
         const finalResponse = await processWithLLM(conversationHistory);
+
+        await recordInteractionLog(req, {
+          actionType: name || 'converse',
+          calendarType: loggingCalendarType,
+          payload: {
+            ...toolPayload,
+            llm_further_interaction: finalResponse.message,
+            result: 'executed'
+          }
+        });
 
         return res.json({
           success: true,
@@ -417,18 +449,48 @@ router.post('/command', upload.single('audio'), async (req, res) => {
           confirmationMessage = 'Confirm this action?';
       }
 
-      return res.json({
+      const confirmationResponse = {
         success: true,
         response: confirmationMessage,
         needsConfirmation: true,
         action: actionPreview,
         conversationHistory
+      };
+
+      await recordInteractionLog(req, {
+        actionType: name || 'converse',
+        calendarType: loggingCalendarType,
+        payload: {
+          ...toolPayload,
+          result: 'pending_confirmation',
+          metadata: {
+            ...toolPayload.metadata,
+            action_preview: actionPreview
+          }
+        }
       });
+
+      return res.json(confirmationResponse);
     } else {
       // GPT is asking for clarification
       conversationHistory.push({
         role: 'assistant',
         content: llmResponse.message
+      });
+
+      await recordInteractionLog(req, {
+        actionType: 'ask_to_clarify',
+        calendarType: loggingCalendarType,
+        payload: {
+          modality: inputModality,
+          user_instruction: userMessage,
+          llm_interaction: llmResponse.message,
+          metadata: {
+            endpoint: 'voice_command',
+            request_id: req.requestId,
+            latency_ms: llmLatencyMs
+          }
+        }
       });
 
       return res.json({
@@ -464,6 +526,8 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
     console.log('📥 Body history:', req.body?.history ? 'present' : 'missing');
 
     let conversationHistory = [];
+    let inputModality = 'voice';
+    const loggingCalendarType = req.query.type || 'google';
 
     // Parse conversation history if provided
     if (req.body?.history) {
@@ -477,7 +541,6 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
 
     // Step 1: Transcribe audio or get text input
     let userMessage;
-    let inputModality = 'voice'; // Default to voice
     
     if (req.file) {
       // Log audio file size
@@ -525,14 +588,9 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
     
     try {
       const calendarType = req.query.type || null;
-      // Determine tokens based on calendar type:
-      // - 'google' or null: token is from Authorization header
-      // - 'outlook': token is from Authorization header
-      // - 'both': token is from Authorization header, additionalToken is from X-Additional-Token header
       const additionalToken = (calendarType === 'both') ? (req.headers['x-additional-token'] || null) : null;
-      const primaryToken = req.token; // Always use token from Authorization header
-      
-      // Fetch today's events
+      const primaryToken = req.token;
+
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
       const todayEnd = new Date();
@@ -585,13 +643,9 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
             .join(', ');
           contextInfo += `Recent contacts: ${contactsList}`;
         }
-
-        console.log('🔍 \n\n\n\n\nDEBUG - Past 2 months meetings context:', JSON.stringify(recentEvents.events, null, 2));
-
       }
     } catch (error) {
       console.error('Failed to fetch context:', error);
-      // Continue without context
     }
 
     // Step 3: Process with LLM
@@ -612,7 +666,9 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
       deviceTimestamp: req.headers['x-device-timestamp']
     };
 
+    const llmStartTime = Date.now();
     const llmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo, inputModality);
+    const llmLatencyMs = Date.now() - llmStartTime;
 
     if (!llmResponse.success) {
       console.log('❌ DEBUG - LLM response failed:', llmResponse.error);
@@ -628,6 +684,21 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
       const toolCall = llmResponse.toolCalls[0];
       const { name, arguments: args } = toolCall.function;
       const params = JSON.parse(args);
+
+      const toolPayload = {
+        modality: inputModality,
+        user_instruction: userMessage,
+        llm_interaction: llmResponse.message,
+        tool_call: {
+          name,
+          arguments: params
+        },
+        metadata: {
+          endpoint: 'voice_stream',
+          request_id: req.requestId,
+          latency_ms: llmLatencyMs
+        }
+      };
 
       // Read-only action - execute and check if followed by mutating action
       if (name === 'list_calendar_events' || name === 'list_tasks') {
@@ -653,7 +724,9 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
         });
 
         // Get LLM's next response to see if it wants to do a mutating action
-        const nextLlmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo);
+        const nextLlmStart = Date.now();
+        const nextLlmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo, inputModality);
+        const nextLlmLatencyMs = Date.now() - nextLlmStart;
 
         // If LLM wants to do a mutating action next, skip sending list result to user
         if (nextLlmResponse.toolCalls && nextLlmResponse.toolCalls.length > 0) {
@@ -674,6 +747,20 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
 
             // Process the mutating action
             const nextParams = JSON.parse(nextToolCall.function.arguments);
+            const nextToolPayload = {
+              modality: inputModality,
+              user_instruction: userMessage,
+              llm_interaction: nextLlmResponse.message,
+              tool_call: {
+                name: nextName,
+                arguments: nextParams
+              },
+              metadata: {
+                endpoint: 'voice_stream',
+                request_id: req.requestId,
+                latency_ms: nextLlmLatencyMs
+              }
+            };
             
             conversationHistory.push({
               role: 'tool',
@@ -831,6 +918,18 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
             console.log(JSON.stringify(confirmationResponse, null, 2));
             
             res.write(`data: ${JSON.stringify(confirmationResponse)}\n\n`);
+            await recordInteractionLog(req, {
+              actionType: nextName || 'converse',
+              calendarType: loggingCalendarType,
+              payload: {
+                ...nextToolPayload,
+                result: 'pending_confirmation',
+                metadata: {
+                  ...nextToolPayload.metadata,
+                  action_preview: actionPreview
+                }
+              }
+            });
             res.end();
             return;
           }
@@ -848,6 +947,19 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
         console.log(JSON.stringify(streamResponse, null, 2));
 
         res.write(`data: ${JSON.stringify(streamResponse)}\n\n`);
+        await recordInteractionLog(req, {
+          actionType: name || 'converse',
+          calendarType: loggingCalendarType,
+          payload: {
+            ...toolPayload,
+            llm_interaction: nextLlmResponse.message,
+            result: 'executed',
+            metadata: {
+              ...toolPayload.metadata,
+              latency_ms: nextLlmLatencyMs
+            }
+          }
+        });
       } else {
         // Add assistant response and tool result to history (even for confirmation)
         conversationHistory.push({
@@ -1067,6 +1179,18 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
         console.log(JSON.stringify(confirmationResponse, null, 2));
 
         res.write(`data: ${JSON.stringify(confirmationResponse)}\n\n`);
+        await recordInteractionLog(req, {
+          actionType: name || 'converse',
+          calendarType: loggingCalendarType,
+          payload: {
+            ...toolPayload,
+            result: 'pending_confirmation',
+            metadata: {
+              ...toolPayload.metadata,
+              action_preview: actionPreview
+            }
+          }
+        });
       }
     } else {
       // Clarification needed
@@ -1085,6 +1209,20 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
       console.log(JSON.stringify(clarificationResponse, null, 2));
 
       res.write(`data: ${JSON.stringify(clarificationResponse)}\n\n`);
+      await recordInteractionLog(req, {
+        actionType: 'ask_to_clarify',
+        calendarType: loggingCalendarType,
+        payload: {
+          modality: inputModality,
+          user_instruction: userMessage,
+          llm_interaction: llmResponse.message,
+          metadata: {
+            endpoint: 'voice_stream',
+            request_id: req.requestId,
+            latency_ms: llmLatencyMs
+          }
+        }
+      });
     }
 
     res.end();
@@ -1100,6 +1238,8 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
 router.post('/execute', async (req, res) => {
   try {
     const { action, confirmed } = req.body;
+    const loggingCalendarType = req.query.type || 'google';
+    const requestModality = req.body?.modality || null;
 
     console.log('📥 EXECUTE API REQUEST:');
     console.log(JSON.stringify({ action, confirmed }, null, 2));
@@ -1121,6 +1261,19 @@ router.post('/execute', async (req, res) => {
       
       console.log('📤 EXECUTE API RESPONSE (cancelled):');
       console.log(JSON.stringify(cancelResponse, null, 2));
+
+      await recordInteractionLog(req, {
+        actionType: 'cancel',
+        calendarType: loggingCalendarType,
+        payload: {
+          modality: requestModality,
+          metadata: {
+            endpoint: 'execute',
+            request_id: req.requestId,
+            action
+          }
+        }
+      });
       
       return res.json(cancelResponse);
     }
@@ -1258,6 +1411,19 @@ router.post('/execute', async (req, res) => {
       
       console.log('📤 EXECUTE API RESPONSE (success):');
       console.log(JSON.stringify(executeResponse, null, 2));
+
+      await recordInteractionLog(req, {
+        actionType: 'approve',
+        calendarType: action?.calendarType || loggingCalendarType,
+        payload: {
+          modality: requestModality,
+          metadata: {
+            endpoint: 'execute',
+            request_id: req.requestId,
+            action
+          }
+        }
+      });
       
       return res.json(executeResponse);
     } else {

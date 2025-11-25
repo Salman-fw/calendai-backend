@@ -7,6 +7,7 @@ import voiceRoutes from './routes/voiceRoutes.js';
 import onboardingRoutes from './routes/onboardingRoutes.js';
 import { requestLogger, errorLogger } from './middleware/logger.js';
 import authAndRateLimit from './middleware/authAndRateLimit.js';
+import { initLogging } from './services/loggingService.js';
 
 // Load environment variables
 dotenv.config();
@@ -65,9 +66,15 @@ app.get('/', (req, res) => {
 app.use(errorLogger);
 
 // Start server
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📍 Health check: http://localhost:${PORT}/health`);
+
+  try {
+    await initLogging();
+  } catch (error) {
+    console.error('⚠️ Failed to initialize logging schema:', error.message);
+  }
 });
 
 // Graceful shutdown handling

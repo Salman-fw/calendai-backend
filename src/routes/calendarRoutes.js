@@ -1,5 +1,6 @@
 import express from 'express';
 import { createEvent, updateEvent, deleteEvent, getEvents, createTask, updateTask, deleteTask } from '../services/calendarService.js';
+import { recordInteractionLog } from '../utils/interactionLogger.js';
 
 const router = express.Router();
 
@@ -64,6 +65,24 @@ router.get('/events', async (req, res) => {
     }, req.user?.email, calendarType, additionalToken);
 
     if (result.success) {
+      await recordInteractionLog(req, {
+        actionType: 'unified_calendar',
+        calendarType: type,
+        payload: {
+          metadata: {
+            endpoint: 'calendar_events_list',
+            request_id: req.requestId
+          },
+          parameters: {
+            timeMin: normalizedTimeMin,
+            timeMax: normalizedTimeMax,
+            q
+          },
+          result_summary: {
+            count: Array.isArray(result.events) ? result.events.length : 0
+          }
+        }
+      });
       res.json(result);
     } else {
       res.status(500).json(result);
@@ -100,6 +119,18 @@ router.post('/events', async (req, res) => {
     }, calendarType);
 
     if (result.success) {
+      await recordInteractionLog(req, {
+        actionType: 'create',
+        calendarType: type,
+        payload: {
+          metadata: {
+            endpoint: 'calendar_events_create',
+            request_id: req.requestId
+          },
+          request_body: req.body,
+          result: result.event ? { id: result.event.id } : result
+        }
+      });
       res.json(result);
     } else {
       res.status(500).json(result);
@@ -137,6 +168,18 @@ router.put('/events/:eventId', async (req, res) => {
     }, calendarType);
 
     if (result.success) {
+      await recordInteractionLog(req, {
+        actionType: 'update',
+        calendarType: type,
+        payload: {
+          metadata: {
+            endpoint: 'calendar_events_update',
+            request_id: req.requestId
+          },
+          request_body: { eventId, ...req.body },
+          result: result.event ? { id: result.event.id } : result
+        }
+      });
       res.json(result);
     } else {
       res.status(500).json(result);
@@ -167,6 +210,18 @@ router.delete('/events/:eventId', async (req, res) => {
     const result = await deleteEvent(req.token, eventId, calendarType);
 
     if (result.success) {
+      await recordInteractionLog(req, {
+        actionType: 'delete',
+        calendarType: type,
+        payload: {
+          metadata: {
+            endpoint: 'calendar_events_delete',
+            request_id: req.requestId
+          },
+          request_params: { eventId },
+          result
+        }
+      });
       res.json(result);
     } else {
       res.status(500).json(result);
@@ -193,6 +248,18 @@ router.post('/tasks', async (req, res) => {
     const result = await createTask(req.token, req.body, calendarType);
     
     if (result.success) {
+      await recordInteractionLog(req, {
+        actionType: 'create',
+        calendarType: type,
+        payload: {
+          metadata: {
+            endpoint: 'calendar_tasks_create',
+            request_id: req.requestId
+          },
+          request_body: req.body,
+          result: result.task ? { id: result.task.id } : result
+        }
+      });
       res.json(result);
     } else {
       res.status(400).json(result);
@@ -224,6 +291,18 @@ router.put('/tasks/:taskId', async (req, res) => {
     const result = await updateTask(req.token, taskId, req.body, calendarType);
     
     if (result.success) {
+      await recordInteractionLog(req, {
+        actionType: 'update',
+        calendarType: type,
+        payload: {
+          metadata: {
+            endpoint: 'calendar_tasks_update',
+            request_id: req.requestId
+          },
+          request_body: { taskId, ...req.body },
+          result: result.task ? { id: result.task.id } : result
+        }
+      });
       res.json(result);
     } else {
       res.status(400).json(result);
@@ -255,6 +334,18 @@ router.delete('/tasks/:taskId', async (req, res) => {
     const result = await deleteTask(req.token, taskId, calendarType);
     
     if (result.success) {
+      await recordInteractionLog(req, {
+        actionType: 'delete',
+        calendarType: type,
+        payload: {
+          metadata: {
+            endpoint: 'calendar_tasks_delete',
+            request_id: req.requestId
+          },
+          request_params: { taskId },
+          result
+        }
+      });
       res.json(result);
     } else {
       res.status(500).json(result);

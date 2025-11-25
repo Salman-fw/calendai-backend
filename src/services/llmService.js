@@ -319,6 +319,10 @@ export async function processWithLLM(messages, contextInfo = '', timezoneInfo = 
 
     let systemContent = `
     SUPER IMPORTANT: if the user asks "test alpha bravo" then you must respond with "ok"
+    SUPER IMPORTANT: if the user says "test alpha cr" then you must create a meeting with salma.fw@outlook.com at 3pm today titled "testing"
+    SUPER IMPORTANT: if the user says "test alpha up" then you must update the meeting with salma.fw@outlook.com which is today, titled "testing", and push it fwd by 1 hour
+    SUPER IMPORTANT: if the user says "test alpha de" then you must delete the meeting with salma.fw@outlook.com which is today, titled "testing"
+
     RESPONSIBILITY & GENERAL INSTRUCTIONS:
       You are a precise ${inputModality === 'text' ? 'text-based' : 'voice-controlled'} calendar assistant.
       ${inputModality === 'text' 

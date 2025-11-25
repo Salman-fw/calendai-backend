@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import logger from '../utils/appLogger.js';
 
 // Request logging middleware
 export function requestLogger(req, res, next) {
@@ -9,7 +10,7 @@ export function requestLogger(req, res, next) {
   req.requestId = requestId;
 
   // Log incoming request
-  console.log(JSON.stringify({
+  logger.info({
     type: 'REQUEST',
     requestId,
     timestamp: new Date().toISOString(),
@@ -23,7 +24,7 @@ export function requestLogger(req, res, next) {
     },
     body: req.method !== 'GET' ? sanitizeBody(req.body) : undefined,
     ip: req.ip || req.connection.remoteAddress
-  }));
+  });
 
   // Capture response (only intercept json since we use it everywhere)
   const originalJson = res.json;
@@ -54,19 +55,42 @@ function sanitizeBody(body) {
 function logResponse(requestId, startTime, statusCode, data) {
   const duration = Date.now() - startTime;
   
-  console.log(JSON.stringify({
+  // Truncate large response bodies (especially calendar events)
+  let body = data;
+  if (typeof data === 'string') {
+    body = data.substring(0, 200);
+  } else if (data && typeof data === 'object') {
+    // For calendar events, only log summary
+    if (data.events && Array.isArray(data.events)) {
+      body = {
+        ...data,
+        events: data.events.length > 5 ? `[${data.events.length} events - truncated]` : data.events
+      };
+    } else {
+      // For other objects, limit to 500 chars when stringified
+      const str = JSON.stringify(data);
+      if (str.length > 500) {
+        // Truncate at a safe position and keep as string
+        body = str.substring(0, 500) + '... [truncated]';
+      } else {
+        body = data;
+      }
+    }
+  }
+  
+  logger.info({
     type: 'RESPONSE',
     requestId,
     timestamp: new Date().toISOString(),
     statusCode,
     duration: `${duration}ms`,
-    body: typeof data === 'string' ? data.substring(0, 200) : data
-  }));
+    body
+  });
 }
 
 // Error logging middleware
 export function errorLogger(err, req, res, next) {
-  console.error(JSON.stringify({
+  logger.error({
     type: 'ERROR',
     requestId: req.requestId,
     timestamp: new Date().toISOString(),
@@ -80,7 +104,7 @@ export function errorLogger(err, req, res, next) {
       path: req.path,
       body: sanitizeBody(req.body)
     }
-  }));
+  });
 
   // Send error response
   res.status(500).json({
