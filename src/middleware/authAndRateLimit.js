@@ -4,40 +4,52 @@ import { db } from '../config/firebase.js';
  * Combined Authentication + Rate Limiting Middleware
  * 
  * Flow:
- * 1. Extract OAuth token from Authorization header
- * 2. Verify token with Google's tokeninfo endpoint or Microsoft Graph API (based on calendar type)
+ * 1. Extract OAuth tokens from g-axs-tk and o-axs-tk headers
+ * 2. Verify primary token (based on type query param)
  * 3. Get user's email from token
  * 4. Check rate limit in Firestore (by email)
  * 5. Increment usage counter atomically
  * 6. Attach user info to req.user
- * 7. Set req.token for use in route handlers
+ * 7. Set req.googleToken and req.outlookToken for use in route handlers
  */
 const authAndRateLimit = async (req, res, next) => {
   try {
-    // Extract token from Authorization header
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    // Extract tokens from custom headers
+    const googleToken = req.headers['g-axs-tk'] || null;
+    const outlookToken = req.headers['o-axs-tk'] || null;
+    
+    if (!googleToken && !outlookToken) {
       return res.status(401).json({
         success: false,
-        error: 'Unauthorized: Missing or invalid authorization header'
+        error: 'Unauthorized: Missing tokens (g-axs-tk or o-axs-tk)'
       });
     }
 
-    const token = authHeader.split('Bearer ')[1];
+    // Set tokens for use in route handlers
+    req.googleToken = googleToken;
+    req.outlookToken = outlookToken;
     
-    // Set req.token for use in route handlers
-    req.token = token;
+    // Determine primary calendar from query parameter
+    const primaryCalendar = req.query.type || 'google';
+    req.primaryCalendar = primaryCalendar;
     
-    // Determine calendar type from query parameter
-    const calendarType = req.query.type || null;
+    // Use primary token for verification
+    const primaryToken = primaryCalendar === 'outlook' ? outlookToken : googleToken;
     
-    // Verify the OAuth token based on calendar type
+    if (!primaryToken) {
+      return res.status(401).json({
+        success: false,
+        error: `Unauthorized: Missing ${primaryCalendar} token`
+      });
+    }
+    
+    // Verify the primary OAuth token
     let userEmail, userId;
     try {
-      if (calendarType === 'outlook') {
+      if (primaryCalendar === 'outlook') {
         // Verify Outlook token with Microsoft Graph API
         const response = await fetch('https://graph.microsoft.com/v1.0/me', {
-          headers: { 'Authorization': `Bearer ${token}` }
+          headers: { 'Authorization': `Bearer ${primaryToken}` }
         });
         
         if (!response.ok) {
@@ -53,7 +65,7 @@ const authAndRateLimit = async (req, res, next) => {
         }
       } else {
         // Verify Google token with Google's tokeninfo endpoint
-        const response = await fetch(`https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${token}`);
+        const response = await fetch(`https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${primaryToken}`);
         
         if (!response.ok) {
           throw new Error('Invalid Google token');

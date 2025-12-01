@@ -535,7 +535,7 @@ Context:\n${contextInfo}`;
     console.log(JSON.stringify(allMessages, null, 2));
 
     const response = await client.chat.completions.create({
-      model: 'gpt-5-mini',
+      model: process.env.LLM_MODEL,
       messages: allMessages,
       tools,
       tool_choice: 'auto',

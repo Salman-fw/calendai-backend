@@ -5,18 +5,11 @@ import { recordInteractionLog } from '../utils/interactionLogger.js';
 const router = express.Router();
 
 // GET /api/calendar/events - Get events with optional filters (supports Google + Outlook)
-// Note: authAndRateLimit middleware (applied at /api level) already extracts token and sets req.token
+// Note: authAndRateLimit middleware (applied at /api level) already extracts tokens and sets req.googleToken, req.outlookToken, req.primaryCalendar
 router.get('/events', async (req, res) => {
   try {
     const { timeMin, timeMax, maxResults, q, type } = req.query;
-    const calendarType = type || null; // 'google' | 'outlook' | 'both'
-    
-    // Determine which token to use based on calendar type:
-    // - 'google' or null: token is from Authorization header
-    // - 'outlook': token is from Authorization header
-    // - 'both': token is from Authorization header, additionalToken is from X-Additional-Token header
-    const additionalToken = (calendarType === 'both') ? (req.headers['x-additional-token'] || null) : null;
-    const primaryToken = req.token; // Always use token from Authorization header
+    const primaryCalendar = type || 'google';
 
     // Normalize dates to ensure they have timezone info (RFC3339 format required by Google Calendar API)
     // If dates are missing timezone, assume they're in UTC and append 'Z'
@@ -57,12 +50,12 @@ router.get('/events', async (req, res) => {
       }
     }
 
-    const result = await getEvents(primaryToken, {
+    const result = await getEvents(req.googleToken, req.outlookToken, primaryCalendar, {
       timeMin: normalizedTimeMin,
       timeMax: normalizedTimeMax,
       maxResults: maxResults ? parseInt(maxResults, 10) : undefined,
       q
-    }, req.user?.email, calendarType, additionalToken);
+    }, req.user?.email);
 
     if (result.success) {
       await recordInteractionLog(req, {
@@ -100,7 +93,7 @@ router.get('/events', async (req, res) => {
 router.post('/events', async (req, res) => {
   try {
     const { summary, description, startTime, endTime, timeZone, attendees, type } = req.body;
-    const calendarType = type || 'google';
+    const primaryCalendar = type || req.primaryCalendar || 'google';
     
     if (!summary || !startTime || !endTime) {
       return res.status(400).json({ 
@@ -109,14 +102,14 @@ router.post('/events', async (req, res) => {
       });
     }
 
-    const result = await createEvent(req.token, {
+    const result = await createEvent(req.googleToken, req.outlookToken, primaryCalendar, {
       summary,
       description,
       startTime,
       endTime,
       timeZone,
       attendees
-    }, calendarType);
+    });
 
     if (result.success) {
       await recordInteractionLog(req, {
@@ -149,7 +142,7 @@ router.put('/events/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
     const { summary, description, startTime, endTime, timeZone, attendees, type } = req.body;
-    const calendarType = type || 'google';
+    const primaryCalendar = type || req.primaryCalendar || 'google';
 
     if (!eventId) {
       return res.status(400).json({
@@ -158,14 +151,14 @@ router.put('/events/:eventId', async (req, res) => {
       });
     }
 
-    const result = await updateEvent(req.token, eventId, {
+    const result = await updateEvent(req.googleToken, req.outlookToken, primaryCalendar, eventId, {
       summary,
       description,
       startTime,
       endTime,
       timeZone,
       attendees
-    }, calendarType);
+    });
 
     if (result.success) {
       await recordInteractionLog(req, {
@@ -198,7 +191,7 @@ router.delete('/events/:eventId', async (req, res) => {
   try {
     const { eventId } = req.params;
     const { type } = req.query;
-    const calendarType = type || 'google';
+    const primaryCalendar = type || req.primaryCalendar || 'google';
 
     if (!eventId) {
       return res.status(400).json({
@@ -207,7 +200,7 @@ router.delete('/events/:eventId', async (req, res) => {
       });
     }
 
-    const result = await deleteEvent(req.token, eventId, calendarType);
+    const result = await deleteEvent(req.googleToken, req.outlookToken, primaryCalendar, eventId);
 
     if (result.success) {
       await recordInteractionLog(req, {
@@ -239,13 +232,13 @@ router.delete('/events/:eventId', async (req, res) => {
 router.post('/tasks', async (req, res) => {
   try {
     const { type } = req.query;
-    const calendarType = type || 'google'; // Default to Google
+    const primaryCalendar = type || req.primaryCalendar || 'google';
     
-    if (!req.token) {
+    if (!req.googleToken && !req.outlookToken) {
       return res.status(401).json({ success: false, error: 'Authentication required' });
     }
 
-    const result = await createTask(req.token, req.body, calendarType);
+    const result = await createTask(req.googleToken, req.outlookToken, primaryCalendar, req.body);
     
     if (result.success) {
       await recordInteractionLog(req, {
@@ -278,9 +271,9 @@ router.put('/tasks/:taskId', async (req, res) => {
   try {
     const { taskId } = req.params;
     const { type } = req.query;
-    const calendarType = type || 'google'; // Default to Google
+    const primaryCalendar = type || req.primaryCalendar || 'google';
     
-    if (!req.token) {
+    if (!req.googleToken && !req.outlookToken) {
       return res.status(401).json({ success: false, error: 'Authentication required' });
     }
 
@@ -288,7 +281,7 @@ router.put('/tasks/:taskId', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Task ID is required' });
     }
 
-    const result = await updateTask(req.token, taskId, req.body, calendarType);
+    const result = await updateTask(req.googleToken, req.outlookToken, primaryCalendar, taskId, req.body);
     
     if (result.success) {
       await recordInteractionLog(req, {
@@ -321,9 +314,9 @@ router.delete('/tasks/:taskId', async (req, res) => {
   try {
     const { taskId } = req.params;
     const { type } = req.query;
-    const calendarType = type || 'google'; // Default to Google
+    const primaryCalendar = type || req.primaryCalendar || 'google';
     
-    if (!req.token) {
+    if (!req.googleToken && !req.outlookToken) {
       return res.status(401).json({ success: false, error: 'Authentication required' });
     }
 
@@ -331,7 +324,7 @@ router.delete('/tasks/:taskId', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Task ID is required' });
     }
 
-    const result = await deleteTask(req.token, taskId, calendarType);
+    const result = await deleteTask(req.googleToken, req.outlookToken, primaryCalendar, taskId);
     
     if (result.success) {
       await recordInteractionLog(req, {
