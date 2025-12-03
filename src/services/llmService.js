@@ -105,9 +105,14 @@ const tools = [
             },
             description: 'List of attendee emails (REQUIRED - at least one attendee must be specified)',
             minItems: 1
+          },
+          calendar: {
+            type: 'string',
+            enum: ['google', 'outlook'],
+            description: 'Calendar to create event in: "google" for Google Calendar, "outlook" for Outlook Calendar. REQUIRED - use primary calendar if user doesn\'t specify.'
           }
         },
-        required: ['summary', 'startTime', 'attendees']
+        required: ['summary', 'startTime', 'attendees', 'calendar']
       }
     }
   },
@@ -148,9 +153,14 @@ const tools = [
               }
             },
             description: 'List of attendee emails (optional - if not provided, existing attendees are preserved)'
+          },
+          calendar: {
+            type: 'string',
+            enum: ['google', 'outlook'],
+            description: 'Calendar containing the event: "google" for Google Calendar, "outlook" for Outlook Calendar. REQUIRED - use primary calendar if user doesn\'t specify.'
           }
         },
-        required: ['eventId']
+        required: ['eventId', 'calendar']
       }
     }
   },
@@ -165,9 +175,14 @@ const tools = [
           eventId: {
             type: 'string',
             description: 'ID of the event to delete'
+          },
+          calendar: {
+            type: 'string',
+            enum: ['google', 'outlook'],
+            description: 'Calendar containing the event: "google" for Google Calendar, "outlook" for Outlook Calendar. REQUIRED - use primary calendar if user doesn\'t specify.'
           }
         },
-        required: ['eventId']
+        required: ['eventId', 'calendar']
       }
     }
   },
@@ -190,9 +205,14 @@ const tools = [
           due: {
             type: 'string',
             description: 'Due date in ISO 8601 format (YYYY-MM-DD or RFC3339). If not provided, task has no due date'
+          },
+          calendar: {
+            type: 'string',
+            enum: ['google', 'outlook'],
+            description: 'Calendar to create task in: "google" for Google Tasks, "outlook" for Outlook Tasks. REQUIRED - use primary calendar if user doesn\'t specify.'
           }
         },
-        required: ['title']
+        required: ['title', 'calendar']
       }
     }
   },
@@ -219,9 +239,14 @@ const tools = [
           due: {
             type: 'string',
             description: 'Updated due date in ISO 8601 format (YYYY-MM-DD or RFC3339). Set to empty string to remove due date'
+          },
+          calendar: {
+            type: 'string',
+            enum: ['google', 'outlook'],
+            description: 'Calendar containing the task: "google" for Google Tasks, "outlook" for Outlook Tasks. REQUIRED - use primary calendar if user doesn\'t specify.'
           }
         },
-        required: ['taskId']
+        required: ['taskId', 'calendar']
       }
     }
   },
@@ -236,9 +261,14 @@ const tools = [
           taskId: {
             type: 'string',
             description: 'ID of the task to delete'
+          },
+          calendar: {
+            type: 'string',
+            enum: ['google', 'outlook'],
+            description: 'Calendar containing the task: "google" for Google Tasks, "outlook" for Outlook Tasks. REQUIRED - use primary calendar if user doesn\'t specify.'
           }
         },
-        required: ['taskId']
+        required: ['taskId', 'calendar']
       }
     }
   }
@@ -286,7 +316,7 @@ CRITICAL RESPONSE RULES:
 };
 
 // Process user message with GPT function calling
-export async function processWithLLM(messages, contextInfo = '', timezoneInfo = {}, inputModality = 'voice') {
+export async function processWithLLM(messages, contextInfo = '', timezoneInfo = {}, inputModality = 'voice', primaryCalendar = 'google') {
   try {
     const client = getOpenAI();
     
@@ -346,6 +376,17 @@ export async function processWithLLM(messages, contextInfo = '', timezoneInfo = 
 
 ${getConsolidatedTimezoneInstructions(currentTime, timezoneInfo)}
 
+CALENDAR SELECTION RULES:
+- The user's primary calendar is: ${primaryCalendar}
+- Mutating tool calls MUST include the "calendar" parameter
+- Use "${primaryCalendar}" as the default calendar for all tool calls UNLESS the user explicitly specifies a different calendar
+- If the user mentions stuff like (non exhaustive )"Google Calendar", "Google", or "Gmail calendar" → use "google"
+- If the user mentions stuff like (non exhaustive list): "Outlook Calendar", "Outlook", or "Microsoft calendar" → use "outlook"
+- Examples:
+  * "Create a meeting" → use "${primaryCalendar}" (default)
+  * "Create a meeting in my Outlook calendar" → use "outlook"
+  * "Delete the meeting from Google" → use "google"
+
 RESPONSE LENGTH RULES:
 - Keep responses as short as possible.
 - Only provide detailed responses when user asks explicitly for meeting details, schedules, or specific information.
@@ -354,7 +395,7 @@ RESPONSE LENGTH RULES:
 - Example detailed responses: Only when user asks "What meetings do I have today?" or "Show me my schedule"
 
 CONVERSATION MEMORY & DATA USE:
-- Perform tool calls and/or use data from tool responses and previous conversation context – never guess or hallucinate details (emails, times, titles).
+- Perform tool calls and/or use data from tool responses and previous conversation context - never guess or hallucinate details (emails, times, titles).
 - If multiple meetings or ambiguity, ask for clarification before proceeding.
 - If missing information, ask ONE short clear question.
 

@@ -62,30 +62,36 @@ async function executeTool(toolCall, googleToken, outlookToken, primaryCalendar,
 
   console.log(`Executing tool: ${name} with params:`, params);
 
+  // Calendar is now required in all tool calls - use it directly
+  const calendar = params.calendar;
+  
+  // Remove calendar from params before passing to service functions
+  const { calendar: _, ...serviceParams } = params;
+
   switch (name) {
     case 'list_calendar_events':
-      return await getEvents(googleToken, outlookToken, primaryCalendar, params, userEmail);
+      return await getEvents(googleToken, outlookToken, calendar, serviceParams, userEmail);
 
     case 'list_tasks':
-      return await getTasks(googleToken, outlookToken, primaryCalendar, params, userEmail);
+      return await getTasks(googleToken, outlookToken, calendar, serviceParams, userEmail);
 
     case 'create_calendar_event':
-      return await createEvent(googleToken, outlookToken, primaryCalendar, params);
+      return await createEvent(googleToken, outlookToken, calendar, serviceParams);
 
     case 'update_calendar_event':
-      return await updateEvent(googleToken, outlookToken, primaryCalendar, params.eventId, params);
+      return await updateEvent(googleToken, outlookToken, calendar, serviceParams.eventId, serviceParams);
 
     case 'delete_calendar_event':
-      return await deleteEvent(googleToken, outlookToken, primaryCalendar, params.eventId);
+      return await deleteEvent(googleToken, outlookToken, calendar, serviceParams.eventId);
 
     case 'create_task':
-      return await createTask(googleToken, outlookToken, primaryCalendar, params);
+      return await createTask(googleToken, outlookToken, calendar, serviceParams);
 
     case 'update_task':
-      return await updateTask(googleToken, outlookToken, primaryCalendar, params.taskId, params);
+      return await updateTask(googleToken, outlookToken, calendar, serviceParams.taskId, serviceParams);
 
     case 'delete_task':
-      return await deleteTask(googleToken, outlookToken, primaryCalendar, params.taskId);
+      return await deleteTask(googleToken, outlookToken, calendar, serviceParams.taskId);
 
     default:
       return { success: false, error: `Unknown tool: ${name}` };
@@ -104,7 +110,7 @@ router.post('/test', upload.single('audio'), async (req, res) => {
     }
 
     const conversationHistory = [{ role: 'user', content: userMessage }];
-    const llmResponse = await processWithLLM(conversationHistory);
+    const llmResponse = await processWithLLM(conversationHistory, '', {}, 'text', 'google');
 
     return res.json({
       success: true,
@@ -302,7 +308,7 @@ router.post('/command', upload.single('audio'), async (req, res) => {
           content: JSON.stringify(toolResult)
         });
 
-        const finalResponse = await processWithLLM(conversationHistory);
+        const finalResponse = await processWithLLM(conversationHistory, '', {}, inputModality, req.primaryCalendar);
 
         await recordInteractionLog(req, {
           actionType: name || 'converse',
@@ -339,6 +345,7 @@ router.post('/command', upload.single('audio'), async (req, res) => {
       console.log('🔍 DEBUG - Updated conversation history after tool call:', JSON.stringify(conversationHistory, null, 2));
 
       // For mutating actions, return preview for confirmation
+      // Calendar is required in tool calls, so it's always in params
       const actionPreview = {
         type: name,
         ...params
@@ -663,7 +670,7 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
     };
 
     const llmStartTime = Date.now();
-    const llmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo, inputModality);
+    const llmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo, inputModality, req.primaryCalendar);
     const llmLatencyMs = Date.now() - llmStartTime;
 
     if (!llmResponse.success) {
@@ -764,6 +771,7 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
             });
 
             // Now handle the mutating action confirmation (reuse existing logic below)
+            // Calendar is required in tool calls, so it's always in nextParams
             const actionPreview = {
               type: nextName,
               ...nextParams
@@ -971,6 +979,7 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
         console.log('🔍 DEBUG - Updated conversation history after tool call (SSE):', JSON.stringify(conversationHistory, null, 2));
 
         // Mutating action - request confirmation
+        // Calendar is required in tool calls, so it's always in params
         const actionPreview = {
           type: name,
           ...params
@@ -1321,7 +1330,7 @@ router.post('/execute', async (req, res) => {
           endTime = new Date(start.getTime() + durationMinutes * 60 * 1000).toISOString();
         }
         
-        result = await createEvent(req.googleToken, req.outlookToken, req.primaryCalendar, {
+        result = await createEvent(req.googleToken, req.outlookToken, action.calendar, {
           summary: action.summary,
           startTime: startTime,
           endTime: endTime,
@@ -1357,7 +1366,7 @@ router.post('/execute', async (req, res) => {
           }
         }
 
-        result = await updateEvent(req.googleToken, req.outlookToken, req.primaryCalendar, action.eventId, {
+        result = await updateEvent(req.googleToken, req.outlookToken, action.calendar, action.eventId, {
           summary: action.summary,
           startTime: action.startTime,
           endTime: action.endTime,
@@ -1367,11 +1376,11 @@ router.post('/execute', async (req, res) => {
         break;
 
       case 'delete_calendar_event':
-        result = await deleteEvent(req.googleToken, req.outlookToken, req.primaryCalendar, action.eventId);
+        result = await deleteEvent(req.googleToken, req.outlookToken, action.calendar, action.eventId);
         break;
 
       case 'create_task':
-        result = await createTask(req.googleToken, req.outlookToken, req.primaryCalendar, {
+        result = await createTask(req.googleToken, req.outlookToken, action.calendar, {
           title: action.title,
           notes: action.notes,
           due: action.due
@@ -1379,7 +1388,7 @@ router.post('/execute', async (req, res) => {
         break;
 
       case 'update_task':
-        result = await updateTask(req.googleToken, req.outlookToken, req.primaryCalendar, action.taskId, {
+        result = await updateTask(req.googleToken, req.outlookToken, action.calendar, action.taskId, {
           title: action.title,
           notes: action.notes,
           due: action.due
@@ -1387,7 +1396,7 @@ router.post('/execute', async (req, res) => {
         break;
 
       case 'delete_task':
-        result = await deleteTask(req.googleToken, req.outlookToken, req.primaryCalendar, action.taskId);
+        result = await deleteTask(req.googleToken, req.outlookToken, action.calendar, action.taskId);
         break;
     }
 
@@ -1469,7 +1478,7 @@ router.post('/widget', upload.single('audio'), async (req, res) => {
 
     while (attempts < maxAttempts) {
       attempts++;
-      llmResponse = await processWithLLM(conversationHistory, {}, {});
+      llmResponse = await processWithLLM(conversationHistory, {}, {}, 'voice', req.primaryCalendar);
 
       if (llmResponse.toolCalls && llmResponse.toolCalls.length > 0) {
         const toolCall = llmResponse.toolCalls[0];
@@ -1479,6 +1488,7 @@ router.post('/widget', upload.single('audio'), async (req, res) => {
         // Check if it's a mutating action that needs confirmation
         if (name === 'create_calendar_event' || name === 'delete_calendar_event' || name === 'update_calendar_event' ||
             name === 'create_task' || name === 'delete_task' || name === 'update_task') {
+          // Calendar is required in tool calls, so it's always in params
           const actionPreview = {
             type: name,
             ...params
