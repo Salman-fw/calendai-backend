@@ -55,6 +55,73 @@ function formatTimeWithUserTimezone(dateString, req) {
   return date.toLocaleString();
 }
 
+// Helper function to check for meeting conflicts
+async function checkMeetingConflict(googleToken, outlookToken, primaryCalendar, startTime, endTime, excludeEventId = null, userEmail = null) {
+  try {
+    if (!startTime || !endTime) {
+      return null;
+    }
+
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+
+    // Fetch events in a slightly wider range to catch any overlaps
+    const searchStart = new Date(start);
+    searchStart.setHours(searchStart.getHours() - 1);
+    const searchEnd = new Date(end);
+    searchEnd.setHours(searchEnd.getHours() + 1);
+
+    if (primaryCalendar === 'google')
+      outlookToken = null;
+    else if (primaryCalendar === 'outlook')
+      googleToken = null;
+
+    const eventsResult = await getEvents(googleToken, outlookToken, primaryCalendar, {
+      timeMin: searchStart.toISOString(),
+      timeMax: searchEnd.toISOString()
+    }, userEmail);
+
+    if (!eventsResult.success || !eventsResult.events) {
+      return null;
+    }
+
+    // Filter out tasks and the event being updated (if any)
+    const meetings = eventsResult.events.filter(event => {
+      // Exclude tasks
+      if (event.isTask) {
+        return false;
+      }
+      // Exclude the event being updated
+      if (excludeEventId && event.id === excludeEventId) {
+        return false;
+      }
+      return true;
+    });
+
+    // Check for overlaps
+    for (const meeting of meetings) {
+      const meetingStart = new Date(meeting.start?.dateTime || meeting.start?.date);
+      const meetingEnd = new Date(meeting.end?.dateTime || meeting.end?.date);
+
+      // Two events overlap if: newStart < existingEnd AND newEnd > existingStart
+      if (start < meetingEnd && end > meetingStart) {
+        return {
+          id: meeting.id,
+          summary: meeting.summary,
+          start: meeting.start,
+          end: meeting.end,
+          attendees: meeting.attendees
+        };
+      }
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error checking meeting conflict:', error);
+    return null;
+  }
+}
+
 // Execute calendar function based on GPT tool call
 async function executeTool(toolCall, googleToken, outlookToken, primaryCalendar, userEmail = null) {
   const { name, arguments: args } = toolCall.function;
@@ -855,6 +922,36 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
           }
         }
 
+        // Check for conflicts when creating or updating calendar events
+        // Only check conflicts if time is being changed (startTime/endTime provided)
+        if (nextName === 'create_calendar_event' || (nextName === 'update_calendar_event' && (nextParams.startTime || nextParams.endTime))) {
+          const startTime = actionPreview.startTime;
+          const endTime = actionPreview.endTime;
+          const excludeEventId = nextName === 'update_calendar_event' ? nextParams.eventId : null;
+          
+          if (startTime && endTime) {
+            try {
+              const conflict = await checkMeetingConflict(
+                req.googleToken,
+                req.outlookToken,
+                nextParams.calendar || req.primaryCalendar,
+                startTime,
+                endTime,
+                excludeEventId,
+                req.user?.email
+              );
+              actionPreview.conflict = conflict;
+            } catch (error) {
+              console.error('Error checking meeting conflict:', error);
+              actionPreview.conflict = null;
+            }
+          } else {
+            actionPreview.conflict = null;
+          }
+        } else {
+          actionPreview.conflict = null;
+        }
+
             let confirmationMessage = '';
             switch (nextName) {
               case 'create_calendar_event':
@@ -1113,6 +1210,36 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
           } catch (error) {
             console.error(`Failed to fetch task details for ${name}:`, error);
           }
+        }
+
+        // Check for conflicts when creating or updating calendar events
+        // Only check conflicts if time is being changed (startTime/endTime provided)
+        if (name === 'create_calendar_event' || (name === 'update_calendar_event' && (params.startTime || params.endTime))) {
+          const startTime = actionPreview.startTime;
+          const endTime = actionPreview.endTime;
+          const excludeEventId = name === 'update_calendar_event' ? params.eventId : null;
+          
+          if (startTime && endTime) {
+            try {
+              const conflict = await checkMeetingConflict(
+                req.googleToken,
+                req.outlookToken,
+                params.calendar || req.primaryCalendar,
+                startTime,
+                endTime,
+                excludeEventId,
+                req.user?.email
+              );
+              actionPreview.conflict = conflict;
+            } catch (error) {
+              console.error('Error checking meeting conflict:', error);
+              actionPreview.conflict = null;
+            }
+          } else {
+            actionPreview.conflict = null;
+          }
+        } else {
+          actionPreview.conflict = null;
         }
 
         let confirmationMessage = '';
