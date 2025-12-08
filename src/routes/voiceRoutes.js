@@ -311,9 +311,11 @@ router.post('/command', upload.single('audio'), async (req, res) => {
     });
 
     // Process with LLM
-    console.log('🔍 DEBUG - Transcribed text:', userMessage);
-    console.log('🔍 DEBUG - Conversation history before LLM:', JSON.stringify(conversationHistory, null, 2));
-    console.log('🔍 DEBUG - Context info:', contextInfo);
+    if (process.env.DEBUG_LLM === 'true') {
+      console.log('🔍 DEBUG - Transcribed text:', userMessage);
+      console.log('🔍 DEBUG - Conversation history before LLM:', JSON.stringify(conversationHistory, null, 2));
+      console.log('🔍 DEBUG - Context info:', contextInfo);
+    }
 
     // Extract timezone and timestamp information from headers
     const timezoneInfo = {
@@ -589,11 +591,13 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
     res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
 
-    console.log('📥 /stream endpoint called');
-    console.log('📥 Has file:', !!req.file);
-    console.log('📥 Body keys:', Object.keys(req.body || {}));
-    console.log('📥 Body text:', req.body?.text);
-    console.log('📥 Body history:', req.body?.history ? 'present' : 'missing');
+    if (process.env.DEBUG_STREAM === 'true') {
+      console.log('📥 /stream endpoint called');
+      console.log('📥 Has file:', !!req.file);
+      console.log('📥 Body keys:', Object.keys(req.body || {}));
+      console.log('📥 Body text:', req.body?.text);
+      console.log('📥 Body history:', req.body?.history ? 'present' : 'missing');
+    }
 
     let conversationHistory = [];
     let inputModality = 'voice';
@@ -639,6 +643,9 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
       
       // Send transcription event
       res.write(`data: ${JSON.stringify({ type: 'transcription', text: userMessage })}\n\n`);
+
+      // res.end();
+      // return;
     } else if (req.body?.text) {
       // Handle text input (for text chat)
       userMessage = req.body.text;
@@ -724,10 +731,12 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
       content: userMessage
     });
 
-    console.log('🔍 DEBUG - Transcribed text:', userMessage);
-    console.log('🔍 DEBUG - Input modality:', inputModality);
-    console.log('🔍 DEBUG - Conversation history before LLM:', JSON.stringify(conversationHistory, null, 2));
-    console.log('🔍 DEBUG - Context info:', contextInfo);
+    if (process.env.DEBUG_LLM === 'true') {
+      console.log('🔍 DEBUG - Transcribed text:', userMessage);
+      console.log('🔍 DEBUG - Input modality:', inputModality);
+      console.log('🔍 DEBUG - Conversation history before LLM:', JSON.stringify(conversationHistory, null, 2));
+      console.log('🔍 DEBUG - Context info:', contextInfo);
+    }
 
     // Extract timezone and timestamp information from headers
     const timezoneInfo = {

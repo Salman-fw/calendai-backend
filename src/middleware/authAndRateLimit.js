@@ -87,7 +87,9 @@ const authAndRateLimit = async (req, res, next) => {
       });
     }
 
-    console.log(`🔐 Authenticated user: ${userEmail} (UID: ${userId})`);
+    if (process.env.DEBUG_RATE_LIMIT === 'true') {
+      console.log(`🔐 Authenticated user: ${userEmail} (UID: ${userId})`);
+    }
 
     // Skip rate limiting for onboarding endpoints
     if (req.path.startsWith('/onboarding')) {
@@ -156,7 +158,9 @@ const authAndRateLimit = async (req, res, next) => {
       });
 
       if (result.exceeded) {
-        console.log(`⚠️ Rate limit exceeded for ${userEmail}: ${result.usage}/${result.limit}`);
+        if (process.env.DEBUG_RATE_LIMIT === 'true') {
+          console.log(`⚠️ Rate limit exceeded for ${userEmail}: ${result.usage}/${result.limit}`);
+        }
         
         // For SSE endpoints, send as SSE event
         if (req.path.includes('/stream')) {
@@ -191,7 +195,9 @@ const authAndRateLimit = async (req, res, next) => {
         });
       }
 
-      console.log(`✅ Rate limit check passed for ${userEmail}: ${result.usage}/${result.limit}`);
+      if (process.env.DEBUG_RATE_LIMIT === 'true') {
+        console.log(`✅ Rate limit check passed for ${userEmail}: ${result.usage}/${result.limit}`);
+      }
 
       // Attach user info to request for use in route handlers
       req.user = {

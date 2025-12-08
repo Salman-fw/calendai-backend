@@ -51,8 +51,10 @@ export async function getTasks(token, filters = {}) {
 
     const taskListsData = await taskListsResponse.json();
     const taskListCount = (taskListsData.value || []).length;
-    console.log(`[OutlookTasksService] Fetched ${taskListCount} task lists from Outlook API`);
-    console.log(`[OutlookTasksService] Task lists data: ${JSON.stringify(taskListsData, null, 2)}`);
+    if (process.env.DEBUG_TASKS === 'true') {
+      console.log(`[OutlookTasksService] Fetched ${taskListCount} task lists from Outlook API`);
+      console.log(`[OutlookTasksService] Task lists data: ${JSON.stringify(taskListsData, null, 2)}`);
+    }
 
     const taskListIds = (taskListsData.value || []).map(list => list.id);
     
@@ -118,7 +120,9 @@ export async function getTasks(token, filters = {}) {
     });
     
     const allTasks = (await Promise.all(taskPromises)).flat();
-    console.log(`[OutlookTasksService] Fetched ${allTasks.length} tasks from Microsoft To Do API`);
+    if (process.env.DEBUG_TASKS === 'true') {
+      console.log(`[OutlookTasksService] Fetched ${allTasks.length} tasks from Microsoft To Do API`);
+    }
     
     // Transform tasks to match calendar event format
     const transformedTasks = allTasks

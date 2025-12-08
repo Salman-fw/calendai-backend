@@ -61,7 +61,9 @@ async function ensureSchema() {
     await pool.query(createSql);
     logger.info('[logging] Ensured PostgreSQL logging schema');
   } catch (error) {
-    logger.error({ type: 'LOG_SCHEMA_ERROR', error: error.message });
+    if (process.env.LOG_DB === 'true') {
+      logger.error({ type: 'LOG_SCHEMA_ERROR', error: error.message });
+    }
   }
 }
 

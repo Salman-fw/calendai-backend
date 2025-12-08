@@ -18,7 +18,10 @@ const PORT = process.env.PORT || 8080;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(requestLogger);
+
+if (process.env.USE_LOGGER === 'true') {
+  app.use(requestLogger);
+}
 
 // Apply authentication + rate limiting to all /api/* routes
 app.use('/api', authAndRateLimit);

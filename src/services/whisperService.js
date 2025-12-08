@@ -34,7 +34,9 @@ export async function transcribeAudio(audioBuffer, originalFilename = "audio.m4a
     const ext = detected?.ext || "m4a";
     const mime = detected?.mime || "audio/mp4";
 
-    console.log(`🎧 Detected format: ${ext} (${mime})`);
+    if (process.env.DEBUG_APIS === 'true') {
+      console.log(`🎧 Detected format: ${ext} (${mime})`);
+    }
 
     // ✅ Create in-memory File-like object
     const file = new File([audioBuffer], `audio.${ext}`, { type: mime });
@@ -42,7 +44,7 @@ export async function transcribeAudio(audioBuffer, originalFilename = "audio.m4a
     // ✅ Call OpenAI transcription API
     const transcription = await client.audio.transcriptions.create({
       file,
-      model: "gpt-4o-transcribe",
+      model: process.env.TRANSCRIPTION_MODEL,
       service_tier:"priority",
       language: "en",
     });

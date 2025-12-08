@@ -81,7 +81,9 @@ export async function getTasks(token, filters = {}) {
     });
     
     const allTasks = (await Promise.all(taskPromises)).flat();
-    console.log(`[TasksService] Fetched ${allTasks.length} tasks from Google Tasks API`);
+    if (process.env.DEBUG_TASKS === 'true') {
+      console.log(`[TasksService] Fetched ${allTasks.length} tasks from Google Tasks API`);
+    }
     
     // Transform tasks to match calendar event format
     const transformedTasks = allTasks

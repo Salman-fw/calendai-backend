@@ -572,8 +572,10 @@ Context:\n${contextInfo}`;
 
     const allMessages = [systemMessage, ...messages];
     
-    console.log('🔵 LLM INPUT - Full messages array:');
-    console.log(JSON.stringify(allMessages, null, 2));
+    if (process.env.DEBUG_LLM === 'true') {
+      console.log('🔵 LLM INPUT - Full messages array:');
+      console.log(JSON.stringify(allMessages, null, 2));
+    }
 
     const response = await client.chat.completions.create({
       model: process.env.LLM_MODEL,
@@ -586,8 +588,10 @@ Context:\n${contextInfo}`;
 
     const responseMessage = response.choices[0].message;
 
-    console.log('🟢 LLM OUTPUT - Response message:');
-    console.log(JSON.stringify(responseMessage, null, 2));
+    if (process.env.DEBUG_LLM === 'true') {
+      console.log('🟢 LLM OUTPUT - Response message:');
+      console.log(JSON.stringify(responseMessage, null, 2));
+    }
 
     return {
       success: true,
