@@ -56,14 +56,14 @@ export async function createEvent(token, eventData) {
             type: 'hangoutsMeet'
           }
         }
-      },
-      conferenceDataVersion: 1
+      }
     };
 
     const response = await calendar.events.insert({
       calendarId: 'primary',
       resource: event,
-      sendUpdates: 'all'
+      sendUpdates: 'all',
+      conferenceDataVersion: 1
     });
 
     return {
@@ -130,14 +130,14 @@ export async function updateEvent(token, eventId, eventData) {
           }
         }
       };
-      updatedEvent.conferenceDataVersion = 1;
     }
 
     const response = await calendar.events.update({
       calendarId: 'primary',
       eventId: eventId,
       resource: updatedEvent,
-      sendUpdates: 'all'
+      sendUpdates: 'all',
+      conferenceDataVersion: 1
     });
 
     return {

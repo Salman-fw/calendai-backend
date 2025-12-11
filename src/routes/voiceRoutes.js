@@ -411,7 +411,9 @@ router.post('/command', upload.single('audio'), async (req, res) => {
         content: JSON.stringify({ status: 'pending_confirmation', action: { type: name, ...params } })
       });
 
-      console.log('🔍 DEBUG - Updated conversation history after tool call:', JSON.stringify(conversationHistory, null, 2));
+      if (process.env.DEBUG_STREAM === 'true') {
+        console.log('🔍 DEBUG - Updated conversation history after tool call:', JSON.stringify(conversationHistory, null, 2));
+      }
 
       // For mutating actions, return preview for confirmation
       // Calendar is required in tool calls, so it's always in params
@@ -1022,8 +1024,12 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
               action: actionPreview
             };
             
-            console.log('📤 STREAM API RESPONSE (confirmation after list):');
-            console.log(JSON.stringify(confirmationResponse, null, 2));
+            if (process.env.DEBUG_STREAM === 'true') {
+              console.log('📤 STREAM API RESPONSE (confirmation after list):');
+            }
+            if (process.env.DEBUG_STREAM === 'true') {
+              console.log(JSON.stringify(confirmationResponse, null, 2));
+            }
             
             res.write(`data: ${JSON.stringify(confirmationResponse)}\n\n`);
             await recordInteractionLog(req, {
@@ -1051,8 +1057,12 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
           result: toolResult
         };
         
-        console.log(`📤 STREAM API RESPONSE (${name}):`);
-        console.log(JSON.stringify(streamResponse, null, 2));
+        if (process.env.DEBUG_STREAM === 'true') {
+          console.log(`📤 STREAM API RESPONSE (${name}):`);
+        }
+        if (process.env.DEBUG_STREAM === 'true') {
+          console.log(JSON.stringify(streamResponse, null, 2));
+        }
 
         res.write(`data: ${JSON.stringify(streamResponse)}\n\n`);
         await recordInteractionLog(req, {
@@ -1082,7 +1092,9 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
           content: JSON.stringify({ status: 'pending_confirmation', action: { type: name, ...params } })
         });
 
-        console.log('🔍 DEBUG - Updated conversation history after tool call (SSE):', JSON.stringify(conversationHistory, null, 2));
+        if (process.env.DEBUG_STREAM === 'true') {
+          console.log('🔍 DEBUG - Updated conversation history after tool call (SSE):', JSON.stringify(conversationHistory, null, 2));
+        }
 
         // Mutating action - request confirmation
         // Calendar is required in tool calls, so it's always in params
@@ -1396,8 +1408,10 @@ router.post('/execute', async (req, res) => {
         cancelled: true
       };
       
-      console.log('📤 EXECUTE API RESPONSE (cancelled):');
-      console.log(JSON.stringify(cancelResponse, null, 2));
+      if (process.env.DEBUG_APIS === 'true') {
+        console.log('📤 EXECUTE API RESPONSE (cancelled):');
+        console.log(JSON.stringify(cancelResponse, null, 2));
+      }
 
       await recordInteractionLog(req, {
         actionType: 'cancel',
@@ -1543,8 +1557,10 @@ router.post('/execute', async (req, res) => {
         result
       };
       
-      console.log('📤 EXECUTE API RESPONSE (success):');
-      console.log(JSON.stringify(executeResponse, null, 2));
+      if (process.env.DEBUG_APIS === 'true') {
+        console.log('📤 EXECUTE API RESPONSE (success):');
+        console.log(JSON.stringify(executeResponse, null, 2));
+      }
 
       await recordInteractionLog(req, {
         actionType: 'approve',

@@ -10,6 +10,55 @@ import { getOnboardingProfile } from './onboardingService.js';
  */
 
 /**
+ * Normalize event times to UTC
+ * @param {Object} event - Event object
+ * @returns {Object} Event with normalized UTC times
+ */
+function normalizeEventToUTC(event) {
+  if (!event) return event;
+  
+  const normalized = { ...event };
+  
+  // Normalize start time to UTC
+  if (normalized.start?.dateTime) {
+    // Only convert if dateTime is a valid ISO string
+    const dateTimeStr = normalized.start.dateTime;
+    // Check if already UTC (ends with Z) or has timezone offset
+    if (dateTimeStr.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(dateTimeStr)) {
+      const date = new Date(dateTimeStr);
+      if (!isNaN(date.getTime())) {
+        normalized.start = {
+          ...normalized.start,
+          dateTime: date.toISOString(),
+          timeZone: 'UTC'
+        };
+      }
+    }
+  } else if (normalized.start?.date) {
+    normalized.start = { ...normalized.start, timeZone: 'UTC' };
+  }
+  
+  // Normalize end time to UTC
+  if (normalized.end?.dateTime) {
+    const dateTimeStr = normalized.end.dateTime;
+    if (dateTimeStr.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(dateTimeStr)) {
+      const date = new Date(dateTimeStr);
+      if (!isNaN(date.getTime())) {
+        normalized.end = {
+          ...normalized.end,
+          dateTime: date.toISOString(),
+          timeZone: 'UTC'
+        };
+      }
+    }
+  } else if (normalized.end?.date) {
+    normalized.end = { ...normalized.end, timeZone: 'UTC' };
+  }
+  
+  return normalized;
+}
+
+/**
  * Get calendar events from Google and/or Outlook calendars
  * @param {string} googleToken - Google OAuth access token
  * @param {string} outlookToken - Outlook OAuth access token
@@ -169,8 +218,11 @@ export async function getEvents(googleToken, outlookToken, primaryCalendar, filt
       }
     }
 
+    // Normalize all event times to UTC
+    const normalizedEvents = allEvents.map(event => normalizeEventToUTC(event));
+
     // Sort all events by start time
-    allEvents.sort((a, b) => {
+    normalizedEvents.sort((a, b) => {
       const aStart = new Date(a.start?.dateTime || a.start?.date || 0);
       const bStart = new Date(b.start?.dateTime || b.start?.date || 0);
       return aStart - bStart;
@@ -178,8 +230,8 @@ export async function getEvents(googleToken, outlookToken, primaryCalendar, filt
 
     // Limit results if needed
     const limitedEvents = filters.maxResults 
-      ? allEvents.slice(0, filters.maxResults)
-      : allEvents;
+      ? normalizedEvents.slice(0, filters.maxResults)
+      : normalizedEvents;
 
     return {
       success: true,
@@ -350,16 +402,19 @@ export async function getTasks(googleToken, outlookToken, primaryCalendar, filte
       }
     }
 
+    // Normalize all task times to UTC
+    const normalizedTasks = allTasks.map(task => normalizeEventToUTC(task));
+
     // Sort tasks by due date
-    allTasks.sort((a, b) => {
+    normalizedTasks.sort((a, b) => {
       const aDue = new Date(a.start?.date || a.start?.dateTime || 0);
       const bDue = new Date(b.start?.date || b.start?.dateTime || 0);
       return aDue - bDue;
     });
 
     const limitedTasks = filters.maxResults 
-      ? allTasks.slice(0, filters.maxResults)
-      : allTasks;
+      ? normalizedTasks.slice(0, filters.maxResults)
+      : normalizedTasks;
 
     return {
       success: true,
