@@ -242,6 +242,8 @@ router.post('/command', upload.single('audio'), async (req, res) => {
 
     // Fetch context (today's meetings + recent contacts)
     let contextInfo = '';
+    let meetingsList = '';
+    let contactsList = '';
     
     try {
       const googleToken = req.googleToken;
@@ -260,11 +262,12 @@ router.post('/command', upload.single('audio'), async (req, res) => {
       }, req.user?.email);
 
       if (events.success && events.events.length > 0) {
-        const meetingsList = events.events
+        meetingsList = events.events
           .map(e => {
             const start = new Date(e.start.dateTime || e.start.date);
             const time = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-            return `${time} - ${e.summary} (ID: ${e.id})`;
+            const calendar = e.source || primaryCalendar;
+            return `${time} - ${e.summary} (ID: ${e.id}, Calendar: ${calendar})`;
           })
           .join(', ');
         contextInfo += `Today's meetings: ${meetingsList}\n`;
@@ -294,7 +297,7 @@ router.post('/command', upload.single('audio'), async (req, res) => {
         });
         
         if (contactMap.size > 0) {
-          const contactsList = Array.from(contactMap.values())
+          contactsList = Array.from(contactMap.values())
             .map(c => `${c.name} (${c.email})`)
             .join(', ');
           contextInfo += `Recent contacts: ${contactsList}`;
@@ -325,7 +328,7 @@ router.post('/command', upload.single('audio'), async (req, res) => {
     };
 
     const llmStart = Date.now();
-    const llmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo);
+    const llmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo, inputModality, req.primaryCalendar, contactsList, meetingsList);
     const llmLatencyMs = Date.now() - llmStart;
 
     if (!llmResponse.success) {
@@ -475,21 +478,56 @@ router.post('/command', upload.single('audio'), async (req, res) => {
         // For delete and update events, fetch event details for confirmation
         if ((name === 'delete_calendar_event' || name === 'update_calendar_event') && params.eventId) {
           try {
-            const token = req.primaryCalendar === 'outlook' ? req.outlookToken : req.googleToken;
-            const calendar = getCalendar(token);
-            const eventResponse = await calendar.events.get({
-              calendarId: 'primary',
-              eventId: params.eventId
-            });
+            const eventCalendar = params.calendar || req.primaryCalendar || 'google';
+            const token = eventCalendar === 'outlook' ? req.outlookToken : req.googleToken;
             
-            const event = eventResponse.data;
-            actionPreview.eventDetails = {
-              summary: event.summary,
-              description: event.description,
-              start: event.start,
-              end: event.end,
-              attendees: event.attendees
-            };
+            if (eventCalendar === 'outlook') {
+              // Fetch event from Outlook using Microsoft Graph API
+              const response = await fetch(`https://graph.microsoft.com/v1.0/me/calendar/events/${params.eventId}`, {
+                headers: {
+                  'Authorization': `Bearer ${token}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+              
+              if (response.ok) {
+                const graphEvent = await response.json();
+                actionPreview.eventDetails = {
+                  summary: graphEvent.subject || '',
+                  description: graphEvent.body?.content || '',
+                  start: {
+                    dateTime: graphEvent.start?.dateTime,
+                    date: graphEvent.start?.date,
+                    timeZone: graphEvent.start?.timeZone || 'UTC'
+                  },
+                  end: {
+                    dateTime: graphEvent.end?.dateTime,
+                    date: graphEvent.end?.date,
+                    timeZone: graphEvent.end?.timeZone || 'UTC'
+                  },
+                  attendees: (graphEvent.attendees || []).map(a => ({
+                    email: a.emailAddress?.address,
+                    displayName: a.emailAddress?.name
+                  }))
+                };
+              }
+            } else {
+              // Fetch event from Google Calendar
+              const calendar = getCalendar(token);
+              const eventResponse = await calendar.events.get({
+                calendarId: 'primary',
+                eventId: params.eventId
+              });
+              
+              const event = eventResponse.data;
+              actionPreview.eventDetails = {
+                summary: event.summary,
+                description: event.description,
+                start: event.start,
+                end: event.end,
+                attendees: event.attendees
+              };
+            }
           } catch (error) {
             console.error(`Failed to fetch event details for ${name}:`, error);
           }
@@ -664,6 +702,8 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
 
     // Step 2: Fetch context (today's meetings + recent contacts)
     let contextInfo = '';
+    let meetingsList = '';
+    let contactsList = '';
     
     try {
       const googleToken = req.googleToken;
@@ -681,11 +721,12 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
       }, req.user?.email);
 
       if (todayEvents.success && todayEvents.events.length > 0) {
-        const meetingsList = todayEvents.events
+        meetingsList = todayEvents.events
           .map(e => {
             const start = new Date(e.start.dateTime || e.start.date);
             const time = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-            return `${time} - ${e.summary} (ID: ${e.id})`;
+            const calendar = e.source || primaryCalendar;
+            return `${time} - ${e.summary} (ID: ${e.id}, Calendar: ${calendar})`;
           })
           .join(', ');
         contextInfo += `Today's meetings: ${meetingsList}\n`;
@@ -706,19 +747,19 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
         recentEvents.events.forEach(event => {
           if (event.attendees) {
             event.attendees.forEach(a => {
-              if (a.email && a.displayName) {
+              // if (a.email && a.displayName) {
                 contactMap.set(a.email, {
-                  name: a.displayName,
-                  email: a.email
+                  name: a.displayName || '',
+                  email: a.email || ''
                 });
-              }
+              // }
             });
           }
         });
         
         if (contactMap.size > 0) {
-          const contactsList = Array.from(contactMap.values())
-            .map(c => `${c.name} (${c.email})`)
+          contactsList = Array.from(contactMap.values())
+            .map(c => `${c.name} ${c.email}`)
             .join(', ');
           contextInfo += `Recent contacts: ${contactsList}`;
         }
@@ -748,7 +789,7 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
     };
 
     const llmStartTime = Date.now();
-    const llmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo, inputModality, req.primaryCalendar);
+    const llmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo, inputModality, req.primaryCalendar, contactsList, meetingsList);
     const llmLatencyMs = Date.now() - llmStartTime;
 
     if (!llmResponse.success) {
@@ -805,7 +846,7 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
 
         // Get LLM's next response to see if it wants to do a mutating action
         const nextLlmStart = Date.now();
-        const nextLlmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo, inputModality);
+        const nextLlmResponse = await processWithLLM(conversationHistory, contextInfo, timezoneInfo, inputModality, req.primaryCalendar, contactsList, meetingsList);
         const nextLlmLatencyMs = Date.now() - nextLlmStart;
 
         // If LLM wants to do a mutating action next, skip sending list result to user
@@ -858,10 +899,10 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
         // For delete and update events, fetch event details for confirmation
         if ((nextName === 'delete_calendar_event' || nextName === 'update_calendar_event') && nextParams.eventId) {
           try {
-            const primaryCalendar = req.primaryCalendar || 'google';
-            const token = primaryCalendar === 'outlook' ? req.outlookToken : req.googleToken;
+            const eventCalendar = nextParams.calendar || req.primaryCalendar || 'google';
+            const token = eventCalendar === 'outlook' ? req.outlookToken : req.googleToken;
             
-            if (primaryCalendar === 'outlook') {
+            if (eventCalendar === 'outlook') {
               // Fetch event from Outlook using Microsoft Graph API
               const response = await fetch(`https://graph.microsoft.com/v1.0/me/calendar/events/${nextParams.eventId}`, {
                 headers: {
@@ -1158,10 +1199,10 @@ router.post('/stream', upload.single('audio'), async (req, res) => {
         // For delete and update events, fetch event details for confirmation
         if ((name === 'delete_calendar_event' || name === 'update_calendar_event') && params.eventId) {
           try {
-            const primaryCalendar = req.primaryCalendar || 'google';
-            const token = primaryCalendar === 'outlook' ? req.outlookToken : req.googleToken;
+            const eventCalendar = params.calendar || req.primaryCalendar || 'google';
+            const token = eventCalendar === 'outlook' ? req.outlookToken : req.googleToken;
             
-            if (primaryCalendar === 'outlook') {
+            if (eventCalendar === 'outlook') {
               // Fetch event from Outlook using Microsoft Graph API
               const response = await fetch(`https://graph.microsoft.com/v1.0/me/calendar/events/${params.eventId}`, {
                 headers: {
@@ -1526,6 +1567,7 @@ router.post('/execute', async (req, res) => {
         break;
 
       case 'delete_calendar_event':
+        console.log('\n\n\n------>> Delete event from calendar: ', action.calendar, action.eventId)
         result = await deleteEvent(req.googleToken, req.outlookToken, action.calendar, action.eventId);
         break;
 
@@ -1630,7 +1672,7 @@ router.post('/widget', upload.single('audio'), async (req, res) => {
 
     while (attempts < maxAttempts) {
       attempts++;
-      llmResponse = await processWithLLM(conversationHistory, {}, {}, 'voice', req.primaryCalendar);
+      llmResponse = await processWithLLM(conversationHistory, {}, {}, 'voice', req.primaryCalendar, '', '');
 
       if (llmResponse.toolCalls && llmResponse.toolCalls.length > 0) {
         const toolCall = llmResponse.toolCalls[0];

@@ -295,13 +295,13 @@ export async function updateEvent(googleToken, outlookToken, primaryCalendar, ev
  * @param {string} eventId - Event ID to delete
  * @returns {Promise<{success: boolean, message?: string, error?: string}>}
  */
-export async function deleteEvent(googleToken, outlookToken, primaryCalendar, eventId) {
-  const token = primaryCalendar === 'outlook' ? outlookToken : googleToken;
+export async function deleteEvent(googleToken, outlookToken, calendar, eventId) {
+  const token = calendar === 'outlook' ? outlookToken : googleToken;
   if (!token) {
     return { success: false, error: `${primaryCalendar} token not available` };
   }
   
-  if (primaryCalendar === 'outlook') {
+  if (calendar === 'outlook') {
     return await outlookCalendarService.deleteEvent(token, eventId);
   }
   return await googleCalendarService.deleteEvent(token, eventId);
